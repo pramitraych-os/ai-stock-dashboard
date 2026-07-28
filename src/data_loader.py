@@ -20,7 +20,8 @@ def fetch_stock_data(
     - end_date (str): End date in 'YYYY-MM-DD' format.
 
     Returns:
-    - pd.DataFrame: A DataFrame containing 'Close' and 'Volume' columns, indexed by Date.
+    - pd.DataFrame: A DataFrame containing 'Open', 'High', 'Low', 'Close' and
+      'Volume' columns, indexed by Date.
     """
     print(f"Fetching data for {ticker} from {start_date} to {end_date}...")
 
@@ -38,9 +39,9 @@ def fetch_stock_data(
             )
             return pd.DataFrame()
 
-        # Extract only the required columns: 'Close' and 'Volume'
-        # Using a subset list ensures we only keep what is needed for the dashboard foundations
-        required_columns = ["Close", "Volume"]
+        # Keep the full OHLCV set so downstream feature engineering (e.g.
+        # technical indicators) has access to Open/High/Low as well.
+        required_columns = ["Open", "High", "Low", "Close", "Volume"]
         df_filtered = df[required_columns]
 
         return df_filtered
@@ -55,15 +56,17 @@ def clean_stock_data(df: pd.DataFrame) -> pd.DataFrame:
 
     Performs the following steps:
     - Converts the index to a timezone-naive datetime format.
-    - Handles missing values in 'Close' (forward-fill) and 'Volume' (fill with 0).
-    - Drops any trailing rows that remain NaN after filling.
-    - Ensures the output columns are explicitly named 'Date', 'Close', and 'Volume'.
+    - Handles missing values in the price columns ('Open', 'High', 'Low',
+      'Close' are forward-filled) and 'Volume' (filled with 0).
+    - Drops any rows that remain NaN in 'Close' after filling.
+    - Ensures the output columns are 'Date', 'Open', 'High', 'Low', 'Close'
+      and 'Volume'.
 
     Parameters:
-    - df (pd.DataFrame): Raw DataFrame with 'Close' and 'Volume' columns, indexed by Date.
+    - df (pd.DataFrame): Raw DataFrame with OHLCV columns, indexed by Date.
 
     Returns:
-    - pd.DataFrame: A cleaned DataFrame with 'Date', 'Close', and 'Volume' columns.
+    - pd.DataFrame: A cleaned DataFrame with 'Date' plus the OHLCV columns.
     """
     # Guard against empty input to avoid downstream errors
     if df.empty:
@@ -72,23 +75,25 @@ def clean_stock_data(df: pd.DataFrame) -> pd.DataFrame:
     # Work on a copy so the caller's DataFrame is not mutated
     df = df.copy()
 
+    price_columns = ["Open", "High", "Low", "Close"]
+
     # 1. Ensure the index is a clean, timezone-naive datetime
     df.index = pd.to_datetime(df.index)
     if df.index.tz is not None:
         # Strip timezone-aware offsets to make the index timezone-naive
         df.index = df.index.tz_localize(None)
 
-    # 2. Handle missing values in 'Close' and 'Volume'
-    # Forward-fill closing prices so gaps carry the last known price
-    df["Close"] = df["Close"].ffill()
+    # 2. Handle missing values
+    # Forward-fill price columns so gaps carry the last known price
+    df[price_columns] = df[price_columns].ffill()
     # Missing volume is treated as zero trading activity
     df["Volume"] = df["Volume"].fillna(0)
     # Drop any remaining NaN rows (e.g. leading NaNs that forward-fill can't cover)
     df = df.dropna(subset=["Close"])
 
-    # 3. Ensure columns are explicitly named 'Date', 'Close', and 'Volume'
+    # 3. Ensure columns are ordered and named consistently
     df.index.name = "Date"
-    df = df[["Close", "Volume"]].reset_index()
+    df = df[price_columns + ["Volume"]].reset_index()
 
     return df
 

@@ -1,4 +1,5 @@
 pandas
 yfinance
 numpy
+ta
 python-dotenv
