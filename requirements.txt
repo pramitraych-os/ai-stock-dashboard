@@ -2,4 +2,6 @@ pandas
 yfinance
 numpy
 ta
+scikit-learn
+joblib
 python-dotenv
