@@ -82,15 +82,43 @@ ai-stock-dashboard/
 │   ├── data_loader.py          # Fetch, clean and persist OHLCV data
 │   ├── feature_engineering.py  # Technical indicators
 │   ├── ml_engine.py            # Model training + ml_score
-│   └── sentiment_engine.py     # News fetching + LLM sentiment_score
+│   ├── sentiment_engine.py     # News fetching + LLM sentiment_score
+│   └── signal_blender.py       # Score blending + signal mapping
+├── ui/                         # Streamlit presentation layer
+│   ├── config.py               # Ticker universe, date ranges, validation
+│   ├── sidebar.py              # Selection controls -> Selection
+│   └── layout.py               # Main-area section containers
+├── app.py                      # Streamlit entry point
+├── run_analysis.py             # End-to-end analysis driver (CLI + library)
 ├── .env                        # API keys (git-ignored, create yourself)
 ├── requirements.txt            # Python dependencies
 ├── README.md                   # Project documentation
 └── SETUP.md                    # This setup guide
 ```
 
-## Next Steps
+## Running the Dashboard
 
-- Add your data files to the [`data/`](data/) directory
-- Implement data loading logic in [`src/data_loader.py`](src/data_loader.py)
-- Create additional scripts in the [`src/`](src/) directory as needed
+With the virtual environment activated:
+
+```bash
+streamlit run app.py
+```
+
+The app opens at <http://localhost:8501>. Pick a ticker from the sidebar
+dropdown or type any yfinance symbol into the custom box (Indian listings need
+the `.NS` suffix), then choose how far back to pull daily bars.
+
+For a headless run without opening a browser:
+
+```bash
+streamlit run app.py --server.headless true
+```
+
+## Running a One-Off Analysis
+
+The pipeline is also usable straight from the terminal, independent of the UI:
+
+```bash
+python run_analysis.py --ticker AAPL
+python run_analysis.py --ticker RELIANCE.NS --lookback-days 1095
+```
