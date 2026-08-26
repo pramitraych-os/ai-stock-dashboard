@@ -86,21 +86,16 @@ def render_layout(selection: "Selection") -> DashboardSlots:
 
 
 def render_placeholders(slots: DashboardSlots, selection: "Selection") -> None:
-    """Fills the empty sections with a note on what will land there.
+    """Fills the still-unbuilt sections with a note on what will land there.
 
     A scaffolding aid only: each call is replaced by the real renderer as the
-    corresponding phase is built.
+    corresponding phase is built. The signal summary is no longer covered here
+    -- :func:`ui.signal_card.render_signal_card` owns that section now.
 
     Parameters:
     - slots (DashboardSlots): The containers from :func:`render_layout`.
     - selection (Selection): The selection the eventual content will describe.
     """
-    with slots.signal_summary:
-        st.info(
-            f"The blended buy/sell signal for **{selection.ticker}**, its score "
-            "and the latest close will render here."
-        )
-
     with slots.price_chart:
         st.info(
             f"An interactive candlestick chart of the {selection.range_label.lower()} "

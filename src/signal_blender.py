@@ -39,10 +39,10 @@ SCORE_MAX = 1.0
 # bucket, which keeps the mapping conservative.
 SIGNAL_BANDS = (
     (0.75, "Strong Buy", "Dark Green", "#006400"),
-    (0.35, "Buy", "Light Green", "#90EE90"),
-    (0.05, "Weak Buy", "Pale Green", "#98FB98"),
+    (0.35, "Buy", "Light Green", "#228B22"),
+    (0.05, "Weak Buy", "Pale Green", "#90EE90"),
     (-0.34, "Weak Sell", "Light Orange", "#FFD700"),
-    (-0.74, "Sell", "Light Red", "#FFA07A"),
+    (-0.74, "Sell", "Light Red", "#FF6347"),
     (SCORE_MIN, "Strong Sell", "Dark Red", "#8B0000"),
 )
 

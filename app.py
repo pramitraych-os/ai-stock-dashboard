@@ -26,6 +26,7 @@ if PROJECT_ROOT not in sys.path:
 
 from ui.layout import render_layout, render_placeholders  # noqa: E402
 from ui.sidebar import render_sidebar  # noqa: E402
+from ui.signal_card import render_signal_card  # noqa: E402
 
 
 def configure_page() -> None:
@@ -55,8 +56,16 @@ def main() -> None:
     selection = render_sidebar()
     slots = render_layout(selection)
 
-    # Placeholder copy until the signal card, chart and breakdown renderers
-    # land; drop these calls one at a time as each section is implemented.
+    with slots.signal_summary:
+        # The analysis pipeline is not wired into the page yet, so there is no
+        # score to show and the card renders its neutral "No Signal" state.
+        # Replace these arguments with the ``analyze_ticker`` payload --
+        # ``blended_score``, ``diagnostics['ml_probability']`` and ``ai_score``
+        # -- once that call lands here.
+        render_signal_card(None)
+
+    # Placeholder copy until the chart and breakdown renderers land; drop these
+    # calls one at a time as each section is implemented.
     render_placeholders(slots, selection)
 
 

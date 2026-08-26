@@ -10,6 +10,8 @@ a score is computed. The three modules divide the screen between them:
   :class:`~ui.sidebar.Selection` the page can act on.
 - :mod:`ui.layout` -- lays out the three main-area sections and hands back the
   containers later phases render their content into.
+- :mod:`ui.signal_card` -- renders the Daily Signal card into the top section,
+  colour-coded by the band ``signal_blender`` puts the score in.
 """
 
 from __future__ import annotations
@@ -24,6 +26,7 @@ from ui.config import (
 )
 from ui.layout import DashboardSlots, render_layout
 from ui.sidebar import Selection, render_sidebar
+from ui.signal_card import render_signal_card
 
 __all__ = [
     "DATE_RANGE_OPTIONS",
@@ -35,5 +38,6 @@ __all__ = [
     "lookback_days_for",
     "render_layout",
     "render_sidebar",
+    "render_signal_card",
     "validate_ticker",
 ]
