@@ -3,9 +3,10 @@
 The page is three stacked sections, read top to bottom as the argument for a
 signal: the verdict, then the price action behind it, then the two scores that
 produced it. This module only builds the shells and hands back the containers;
-what goes inside them is the next phase's job. Because Streamlit containers
-hold their position in the page regardless of when they are written to, later
-code can fill the bottom section before the top one without reordering the UI.
+what goes inside them belongs to the renderers in ``signal_card``,
+``price_chart`` and ``breakdown``. Because Streamlit containers hold their
+position in the page regardless of when they are written to, later code can
+fill the bottom section before the top one without reordering the UI.
 """
 
 from __future__ import annotations
@@ -83,25 +84,3 @@ def render_layout(selection: "Selection") -> DashboardSlots:
         breakdown_technical=technical_col,
         breakdown_sentiment=sentiment_col,
     )
-
-
-def render_placeholders(slots: DashboardSlots, selection: "Selection") -> None:
-    """Fills the still-unbuilt sections with a note on what will land there.
-
-    A scaffolding aid only: each call is replaced by the real renderer as the
-    corresponding phase is built. Two sections have already graduated and are
-    deliberately not covered here -- the signal summary belongs to
-    :func:`ui.signal_card.render_signal_card`, and the price chart to
-    :func:`ui.price_chart.render_stock_chart`.
-
-    Parameters:
-    - slots (DashboardSlots): The containers from :func:`render_layout`.
-    - selection (Selection): The selection the eventual content will describe.
-    """
-    with slots.breakdown_technical:
-        st.markdown("**Technical**")
-        st.caption("RSI, MACD, moving averages and the ML score behind them.")
-
-    with slots.breakdown_sentiment:
-        st.markdown("**Sentiment**")
-        st.caption("Recent headlines and the LLM's rationale for its score.")
