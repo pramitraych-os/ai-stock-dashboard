@@ -89,19 +89,15 @@ def render_placeholders(slots: DashboardSlots, selection: "Selection") -> None:
     """Fills the still-unbuilt sections with a note on what will land there.
 
     A scaffolding aid only: each call is replaced by the real renderer as the
-    corresponding phase is built. The signal summary is no longer covered here
-    -- :func:`ui.signal_card.render_signal_card` owns that section now.
+    corresponding phase is built. Two sections have already graduated and are
+    deliberately not covered here -- the signal summary belongs to
+    :func:`ui.signal_card.render_signal_card`, and the price chart to
+    :func:`ui.price_chart.render_stock_chart`.
 
     Parameters:
     - slots (DashboardSlots): The containers from :func:`render_layout`.
     - selection (Selection): The selection the eventual content will describe.
     """
-    with slots.price_chart:
-        st.info(
-            f"An interactive candlestick chart of the {selection.range_label.lower()} "
-            "of bars, with moving averages overlaid, will render here."
-        )
-
     with slots.breakdown_technical:
         st.markdown("**Technical**")
         st.caption("RSI, MACD, moving averages and the ML score behind them.")

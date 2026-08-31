@@ -1,4 +1,6 @@
 streamlit>=1.30
+# 5.19 first shipped marker.cornerradius, which the volume bars use.
+plotly>=5.19
 pandas
 yfinance
 numpy
