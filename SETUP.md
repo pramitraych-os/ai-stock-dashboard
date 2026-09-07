@@ -31,8 +31,8 @@ pip install -r requirements.txt
 Create a `.env` file at the project root (it is git-ignored) with **one** of:
 
 ```bash
-# Google Gemini
-GEMINI_API_KEY=your_key_here
+# Anthropic Claude
+ANTHROPIC_API_KEY=your_key_here
 
 # ...or OpenAI
 OPENAI_API_KEY=your_key_here
@@ -42,8 +42,9 @@ Optional overrides:
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `SENTIMENT_LLM_PROVIDER` | auto-detect (Gemini first) | Force `gemini` or `openai` when both keys are set |
-| `GEMINI_MODEL` | `gemini-2.5-flash` | Gemini model id |
+| `SENTIMENT_LLM_PROVIDER` | auto-detect (Claude first) | Force `claude` or `openai` when both keys are set |
+| `CLAUDE_MODEL` | `claude-opus-5` | Claude model id |
+| `CLAUDE_EFFORT` | `medium` | Claude reasoning depth: `low`, `medium`, `high`, `xhigh` or `max` |
 | `OPENAI_MODEL` | `gpt-4o-mini` | OpenAI model id |
 
 Without a key the engine still runs: news fetching needs no credentials, and

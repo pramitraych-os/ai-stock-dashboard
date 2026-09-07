@@ -13,13 +13,14 @@ sentiment signal that can be blended with the technical/ML signal produced by
    into a ``sentiment_score`` in ``[-1.0, +1.0]`` -- the same scale as
    ``ml_engine.get_ml_score`` -- plus a short bullet-point rationale.
 
-Two providers are supported over plain HTTPS (via :mod:`requests`, so no extra
-vendor SDK is required):
+Two providers are supported:
 
-* **Google Gemini** -- set ``GEMINI_API_KEY`` (or ``GOOGLE_API_KEY``).
-* **OpenAI** -- set ``OPENAI_API_KEY``.
+* **Anthropic Claude** -- set ``ANTHROPIC_API_KEY``, called through the
+  official :mod:`anthropic` SDK.
+* **OpenAI** -- set ``OPENAI_API_KEY``, called over plain HTTPS via
+  :mod:`requests`.
 
-Whichever key is present is used; ``SENTIMENT_LLM_PROVIDER`` (``"gemini"`` or
+Whichever key is present is used; ``SENTIMENT_LLM_PROVIDER`` (``"claude"`` or
 ``"openai"``) forces a choice when both are set. Keys are read from the
 environment, with a ``.env`` file at the project root loaded automatically if
 :mod:`dotenv` is installed.
@@ -59,12 +60,20 @@ YAHOO_RSS_URL = "https://feeds.finance.yahoo.com/rss/2.0/headline?s={ticker}&reg
 # Yahoo rejects requests without a browser-like User-Agent.
 _RSS_HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; ai-stock-dashboard/1.0)"}
 
-# Default models, overridable via ``GEMINI_MODEL`` / ``OPENAI_MODEL``.
-DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
+# Default models, overridable via ``CLAUDE_MODEL`` / ``OPENAI_MODEL``.
+DEFAULT_CLAUDE_MODEL = "claude-opus-5"
 DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
 
-GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 OPENAI_URL = "https://api.openai.com/v1/chat/completions"
+
+# Reasoning depth for Claude. Scoring a dozen headlines is a light judgement
+# call, so the mid setting buys accuracy without paying for 'high'.
+# Overridable via ``CLAUDE_EFFORT`` (low | medium | high | xhigh | max).
+DEFAULT_CLAUDE_EFFORT = "medium"
+
+# Claude thinks by default, and thinking tokens count against max_tokens, so
+# this has to leave room for reasoning as well as the small JSON reply.
+CLAUDE_MAX_TOKENS = 8192
 
 # Network + retry budget. Retries cover HTTP 429 and 5xx as well as transport
 # errors, with exponential backoff (2s, 4s, 8s) unless the server sends a
@@ -417,31 +426,31 @@ class SentimentAPIError(RuntimeError):
 def resolve_provider() -> tuple[str, str]:
     """Determines which LLM provider and API key to use from the environment.
 
-    Honours ``SENTIMENT_LLM_PROVIDER`` when set; otherwise prefers Gemini and
+    Honours ``SENTIMENT_LLM_PROVIDER`` when set; otherwise prefers Claude and
     falls back to OpenAI, based on which key is present.
 
     Returns:
-    - tuple[str, str]: The provider name ('gemini' or 'openai') and its key.
+    - tuple[str, str]: The provider name ('claude' or 'openai') and its key.
 
     Raises:
     - SentimentAPIError: If the requested provider is unknown, or no usable
       API key is configured (status 'no_api_key').
     """
-    gemini_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY") or ""
+    claude_key = os.getenv("ANTHROPIC_API_KEY") or os.getenv("CLAUDE_API_KEY") or ""
     openai_key = os.getenv("OPENAI_API_KEY") or ""
 
     requested = (os.getenv("SENTIMENT_LLM_PROVIDER") or "").strip().lower()
 
     if requested:
-        if requested not in ("gemini", "openai"):
+        if requested not in ("claude", "openai"):
             raise SentimentAPIError(
-                f"Unknown SENTIMENT_LLM_PROVIDER '{requested}'. Use 'gemini' or 'openai'.",
+                f"Unknown SENTIMENT_LLM_PROVIDER '{requested}'. Use 'claude' or 'openai'.",
                 status="config_error",
             )
 
-        key = gemini_key if requested == "gemini" else openai_key
+        key = claude_key if requested == "claude" else openai_key
         if not key:
-            env_name = "GEMINI_API_KEY" if requested == "gemini" else "OPENAI_API_KEY"
+            env_name = "ANTHROPIC_API_KEY" if requested == "claude" else "OPENAI_API_KEY"
             raise SentimentAPIError(
                 f"SENTIMENT_LLM_PROVIDER is '{requested}' but {env_name} is not set.",
                 status="no_api_key",
@@ -449,14 +458,14 @@ def resolve_provider() -> tuple[str, str]:
         return requested, key
 
     # No explicit preference: use whichever key is available.
-    if gemini_key:
-        return "gemini", gemini_key
+    if claude_key:
+        return "claude", claude_key
     if openai_key:
         return "openai", openai_key
 
     raise SentimentAPIError(
-        "No LLM API key found. Set GEMINI_API_KEY (or GOOGLE_API_KEY) or "
-        "OPENAI_API_KEY in your environment or in a .env file at the project root.",
+        "No LLM API key found. Set ANTHROPIC_API_KEY or OPENAI_API_KEY in your "
+        "environment or in a .env file at the project root.",
         status="no_api_key",
     )
 
@@ -555,47 +564,103 @@ def _post_with_retries(url: str, headers: dict, payload: dict, provider: str) ->
     )
 
 
-def _call_gemini(prompt: str, api_key: str, model: str) -> str:
-    """Sends the prompt to the Google Gemini REST API.
+# JSON Schema handed to Claude's structured-output mode, which makes the reply
+# schema-valid by construction. The score *bounds* stay in the prompt: the
+# schema subset accepted here does not enforce numeric ranges, and
+# :func:`_coerce_score` clips anything out of range regardless.
+SENTIMENT_JSON_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "sentiment_score": {"type": "number"},
+        "summary": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": ["sentiment_score", "summary"],
+    "additionalProperties": False,
+}
+
+
+def _call_claude(prompt: str, api_key: str, model: str) -> str:
+    """Sends the prompt to the Anthropic Messages API via the official SDK.
+
+    The SDK owns retries and timeouts on this path (configured from the same
+    budget constants the OpenAI path uses), so it deliberately does not go
+    through :func:`_post_with_retries`.
 
     Parameters:
     - prompt (str): The rendered sentiment prompt.
-    - api_key (str): Gemini API key.
-    - model (str): Gemini model id (e.g. 'gemini-2.5-flash').
+    - api_key (str): Anthropic API key.
+    - model (str): Claude model id (e.g. 'claude-opus-5').
 
     Returns:
-    - str: The model's raw text reply.
+    - str: The model's raw text reply, valid JSON per ``output_config.format``.
 
     Raises:
-    - SentimentAPIError: On an API failure or an empty/blocked response.
+    - SentimentAPIError: On an API failure, a refusal, or an empty response.
     """
-    payload = {
-        "systemInstruction": {"parts": [{"text": SYSTEM_INSTRUCTION}]},
-        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-        "generationConfig": {
-            # Ask for JSON natively so the reply needs minimal cleanup.
-            "responseMimeType": "application/json",
-            # Low temperature keeps scores stable across repeated runs.
-            "temperature": 0.2,
-            "maxOutputTokens": 1024,
-        },
-    }
-    headers = {"x-goog-api-key": api_key, "Content-Type": "application/json"}
+    try:
+        import anthropic
+    except ImportError as e:
+        raise SentimentAPIError(
+            "The 'anthropic' package is required for Claude sentiment scoring. "
+            "Install it with 'pip install anthropic'.",
+            status="config_error",
+        ) from e
 
-    body = _post_with_retries(GEMINI_URL.format(model=model), headers, payload, "Gemini")
+    client = anthropic.Anthropic(
+        api_key=api_key,
+        timeout=REQUEST_TIMEOUT_SECONDS,
+        max_retries=MAX_RETRIES,
+    )
 
-    candidates = body.get("candidates") or []
-    if not candidates:
-        # Safety filters and prompt blocks come back with no candidates.
-        reason = (body.get("promptFeedback") or {}).get("blockReason", "no candidates")
-        raise SentimentAPIError(f"Gemini returned no usable content ({reason}).")
+    try:
+        response = client.beta.messages.create(
+            model=model,
+            max_tokens=CLAUDE_MAX_TOKENS,
+            system=SYSTEM_INSTRUCTION,
+            messages=[{"role": "user", "content": prompt}],
+            # No temperature: sampling parameters are rejected on current
+            # Claude models. Score stability comes from the scoring guidance
+            # in the prompt instead.
+            output_config={
+                "effort": os.getenv("CLAUDE_EFFORT") or DEFAULT_CLAUDE_EFFORT,
+                # Native JSON mode, so the reply needs no cleanup.
+                "format": {"type": "json_schema", "schema": SENTIMENT_JSON_SCHEMA},
+            },
+            # If a safety classifier declines the request, retry it on a
+            # fallback model within the same call instead of losing the score.
+            betas=["server-side-fallback-2026-07-01"],
+            fallbacks="default",
+        )
+    except (anthropic.AuthenticationError, anthropic.PermissionDeniedError) as e:
+        raise SentimentAPIError(
+            f"Claude rejected the API key (HTTP {e.status_code}). Check that "
+            "ANTHROPIC_API_KEY is valid and has access to the model.",
+            status="auth_error",
+        ) from e
+    except anthropic.RateLimitError as e:
+        raise SentimentAPIError(
+            f"Claude rate-limited the request: {e}", status="rate_limited"
+        ) from e
+    except anthropic.APIStatusError as e:
+        raise SentimentAPIError(
+            f"Claude HTTP {e.status_code}: {_clean_text(str(e.message), 300)}",
+            status="api_error",
+        ) from e
+    except anthropic.APIConnectionError as e:
+        # Covers APITimeoutError, which subclasses it.
+        raise SentimentAPIError(f"Claude request failed: {e}", status="network_error") from e
 
-    parts = (candidates[0].get("content") or {}).get("parts") or []
-    text = "".join(part.get("text", "") for part in parts if isinstance(part, dict))
+    if response.stop_reason == "refusal":
+        category = getattr(response.stop_details, "category", None) or "unspecified"
+        raise SentimentAPIError(f"Claude declined to answer (category={category}).")
+
+    # Thinking blocks share the content list, so pick out the text ones.
+    text = "".join(block.text for block in response.content if block.type == "text")
 
     if not text.strip():
-        finish = candidates[0].get("finishReason", "unknown")
-        raise SentimentAPIError(f"Gemini returned an empty reply (finishReason={finish}).")
+        raise SentimentAPIError(
+            f"Claude returned an empty reply (stop_reason={response.stop_reason})."
+        )
 
     return text
 
@@ -646,13 +711,17 @@ def _resolve_model(provider: str) -> str:
     """Returns the model id to use for a provider, honouring env overrides.
 
     Parameters:
-    - provider (str): Either 'gemini' or 'openai'.
+    - provider (str): Either 'claude' or 'openai'.
 
     Returns:
     - str: The configured model id, or the provider's documented default.
     """
-    if provider == "gemini":
-        return os.getenv("GEMINI_MODEL") or DEFAULT_GEMINI_MODEL
+    if provider == "claude":
+        return (
+            os.getenv("CLAUDE_MODEL")
+            or os.getenv("ANTHROPIC_MODEL")
+            or DEFAULT_CLAUDE_MODEL
+        )
     return os.getenv("OPENAI_MODEL") or DEFAULT_OPENAI_MODEL
 
 
@@ -661,7 +730,7 @@ def _call_llm(prompt: str, provider: str, api_key: str, model: str) -> str:
 
     Parameters:
     - prompt (str): The rendered sentiment prompt.
-    - provider (str): Either 'gemini' or 'openai'.
+    - provider (str): Either 'claude' or 'openai'.
     - api_key (str): The provider's API key.
     - model (str): The model id to call.
 
@@ -671,8 +740,8 @@ def _call_llm(prompt: str, provider: str, api_key: str, model: str) -> str:
     Raises:
     - SentimentAPIError: On an unsupported provider or an API failure.
     """
-    if provider == "gemini":
-        return _call_gemini(prompt, api_key, model)
+    if provider == "claude":
+        return _call_claude(prompt, api_key, model)
     if provider == "openai":
         return _call_openai(prompt, api_key, model)
 
@@ -879,7 +948,7 @@ def get_llm_sentiment_score(ticker: str, limit: int = 10) -> dict:
     """Scores recent news sentiment for a ticker using an LLM.
 
     Fetches news via :func:`fetch_stock_news`, prompts the configured provider
-    (Gemini or OpenAI) for strict JSON, and parses the reply defensively. The
+    (Claude or OpenAI) for strict JSON, and parses the reply defensively. The
     resulting ``sentiment_score`` shares the ``[-1.0, +1.0]`` scale used by
     ``ml_engine.get_ml_score``, so the two signals can be blended directly.
 
@@ -901,7 +970,7 @@ def get_llm_sentiment_score(ticker: str, limit: int = 10) -> dict:
         'rate_limited', 'api_error', 'network_error', 'parse_error',
         'config_error' or 'invalid_ticker'.
       - 'article_count' (int): Number of articles analyzed.
-      - 'provider' (str | None): 'gemini' or 'openai'.
+      - 'provider' (str | None): 'claude' or 'openai'.
       - 'model' (str | None): The model id used.
       - 'error' (str | None): Failure detail when status is not 'ok'.
       - 'headlines' (list[str]): The headlines the score is based on.

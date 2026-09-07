@@ -424,7 +424,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
             "the result as JSON."
         ),
         epilog=(
-            "Set GEMINI_API_KEY or OPENAI_API_KEY (in the environment or a .env "
+            "Set ANTHROPIC_API_KEY or OPENAI_API_KEY (in the environment or a .env "
             "file at the project root) to enable LLM sentiment; without a key "
             "the sentiment leg falls back to a neutral 0.0."
         ),

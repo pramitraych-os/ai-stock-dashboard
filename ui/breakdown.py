@@ -106,7 +106,7 @@ ML_STATUS_NOTES = {
 SENTIMENT_STATUS_NOTES = {
     "no_news": "No recent headlines found for this ticker, so the score is neutral.",
     "no_api_key": (
-        "No LLM credentials found. Set GEMINI_API_KEY or OPENAI_API_KEY in your "
+        "No LLM credentials found. Set ANTHROPIC_API_KEY or OPENAI_API_KEY in your "
         "environment or a .env file to enable sentiment scoring."
     ),
     "auth_error": "The LLM provider rejected the API key.",
@@ -617,8 +617,8 @@ if __name__ == "__main__":
         ],
         "status": "ok",
         "article_count": 3,
-        "provider": "gemini",
-        "model": "gemini-2.5-flash",
+        "provider": "claude",
+        "model": "claude-opus-5",
         "error": None,
         "headlines": [
             "Stock climbs 3% after earnings beat",
@@ -653,7 +653,7 @@ if __name__ == "__main__":
             "article_count": 0,
             "provider": None,
             "model": None,
-            "error": "No GEMINI_API_KEY or OPENAI_API_KEY found.",
+            "error": "No ANTHROPIC_API_KEY or OPENAI_API_KEY found.",
             "headlines": [],
         },
         _probe,

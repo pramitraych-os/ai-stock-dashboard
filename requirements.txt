@@ -9,3 +9,5 @@ scikit-learn
 joblib
 python-dotenv
 requests
+# Claude sentiment scoring; 1.x is the current major (output_config, effort).
+anthropic>=1.4,<2
