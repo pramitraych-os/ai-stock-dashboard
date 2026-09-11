@@ -88,8 +88,13 @@ ai-stock-dashboard/
 ├── ui/                         # Streamlit presentation layer
 │   ├── config.py               # Ticker universe, date ranges, validation
 │   ├── sidebar.py              # Selection controls -> Selection
-│   └── layout.py               # Main-area section containers
+│   ├── layout.py               # Main-area section containers
+│   ├── market_table.py         # Ranked overview table + row selection
+│   ├── signal_card.py          # The Daily Signal card
+│   ├── price_chart.py          # Candlestick + volume chart
+│   └── breakdown.py            # ML / sentiment component columns
 ├── app.py                      # Streamlit entry point
+├── market_scan.py              # Multi-ticker scan behind the overview table
 ├── run_analysis.py             # End-to-end analysis driver (CLI + library)
 ├── .env                        # API keys (git-ignored, create yourself)
 ├── requirements.txt            # Python dependencies
@@ -105,9 +110,25 @@ With the virtual environment activated:
 streamlit run app.py
 ```
 
-The app opens at <http://localhost:8501>. Pick a ticker from the sidebar
-dropdown or type any yfinance symbol into the custom box (Indian listings need
-the `.NS` suffix), then choose how far back to pull daily bars.
+The app opens at <http://localhost:8501>.
+
+The page leads with a **Market Overview** table: the full preset universe scored
+end to end and ranked by conviction, so Strong Buy and Strong Sell sit at the
+top and weak or neutral names at the bottom. It shows the top 20 by default,
+with a *Show all* toggle underneath. Click any column header to re-sort.
+
+Below the table, one stock is unpacked in detail — signal card, price chart and
+the two component scores. Click a table row to point the detail sections at that
+stock, or pick a ticker from the sidebar dropdown, or type any yfinance symbol
+into the custom box (Indian listings need the `.NS` suffix), then choose how far
+back to pull daily bars.
+
+**The first load is the slow one.** Every row runs a price fetch, a model
+inference and an LLM sentiment call, so a cold scan of the universe takes about
+a minute behind its progress bar. Rows are then cached per symbol for 30
+minutes, and the ticker you click is already scored — clicking a row costs no
+fetch and no LLM call. To skip the LLM leg entirely, leave the API keys unset:
+sentiment falls back to a neutral `0.0` and the scan finishes in seconds.
 
 For a headless run without opening a browser:
 
@@ -122,4 +143,12 @@ The pipeline is also usable straight from the terminal, independent of the UI:
 ```bash
 python run_analysis.py --ticker AAPL
 python run_analysis.py --ticker RELIANCE.NS --lookback-days 1095
+```
+
+The overview table's scan is scriptable the same way, and prints the same
+ranking the dashboard draws:
+
+```bash
+python market_scan.py AAPL MSFT RELIANCE.NS
+python market_scan.py AAPL NVDA --news-limit 5 --workers 4
 ```

@@ -39,6 +39,11 @@ class Ticker:
 
 # Large, liquid names on both exchanges: enough news flow for the sentiment
 # stage and enough history for the model to train on.
+#
+# Deliberately longer than :data:`MARKET_TABLE_SIZE`. The overview table ranks
+# this whole list and shows the strongest slice of it, so the universe has to
+# exceed the slice for the ranking -- and the "show all" control under the table
+# -- to mean anything.
 TICKER_UNIVERSE: tuple[Ticker, ...] = (
     Ticker("AAPL", "Apple Inc.", "US"),
     Ticker("MSFT", "Microsoft Corp.", "US"),
@@ -48,6 +53,10 @@ TICKER_UNIVERSE: tuple[Ticker, ...] = (
     Ticker("META", "Meta Platforms Inc.", "US"),
     Ticker("TSLA", "Tesla Inc.", "US"),
     Ticker("JPM", "JPMorgan Chase & Co.", "US"),
+    Ticker("AVGO", "Broadcom Inc.", "US"),
+    Ticker("AMD", "Advanced Micro Devices", "US"),
+    Ticker("NFLX", "Netflix Inc.", "US"),
+    Ticker("WMT", "Walmart Inc.", "US"),
     Ticker("RELIANCE.NS", "Reliance Industries", "India"),
     Ticker("TCS.NS", "Tata Consultancy Services", "India"),
     Ticker("INFY.NS", "Infosys Ltd.", "India"),
@@ -56,11 +65,37 @@ TICKER_UNIVERSE: tuple[Ticker, ...] = (
     Ticker("ITC.NS", "ITC Ltd.", "India"),
     Ticker("SBIN.NS", "State Bank of India", "India"),
     Ticker("BHARTIARTL.NS", "Bharti Airtel Ltd.", "India"),
+    Ticker("LT.NS", "Larsen & Toubro Ltd.", "India"),
+    Ticker("AXISBANK.NS", "Axis Bank Ltd.", "India"),
+    Ticker("KOTAKBANK.NS", "Kotak Mahindra Bank", "India"),
+    Ticker("MARUTI.NS", "Maruti Suzuki India", "India"),
 )
+
+# Symbol lookup for the overview table, which starts from a scan row -- a
+# pipeline payload that knows the symbol and nothing about company names.
+TICKER_BY_SYMBOL: dict[str, Ticker] = {entry.symbol: entry for entry in TICKER_UNIVERSE}
 
 # Both tickers in ``data/`` are already cached, so the default selection loads
 # without a cold fetch.
 DEFAULT_TICKER = "AAPL"
+
+# Rows the overview table shows before the "show all" control is used. Twenty is
+# a screenful on a laptop: long enough that both ends of the signal ladder are
+# represented, short enough to read without scrolling past the detail sections.
+MARKET_TABLE_SIZE = 20
+
+
+def ticker_for(symbol: str) -> Ticker | None:
+    """Looks up a preset entry by symbol.
+
+    Parameters:
+    - symbol (str): A yfinance symbol, e.g. ``'RELIANCE.NS'``.
+
+    Returns:
+    - Ticker | None: The universe entry, or None for a symbol that is not a
+      preset -- which is the normal case for a hand-typed ticker.
+    """
+    return TICKER_BY_SYMBOL.get(str(symbol).strip().upper())
 
 
 # ---------------------------------------------------------------------------

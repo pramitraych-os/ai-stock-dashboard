@@ -46,6 +46,15 @@ SIGNAL_BANDS = (
     (SCORE_MIN, "Strong Sell", "Dark Red", "#8B0000"),
 )
 
+# The seventh state, which is not a band: there was no score to bucket at all,
+# because a stage the blend needs never ran. Deliberately a neutral grey rather
+# than a shade of any band's hue -- "we do not know" is a different statement
+# from "we see nothing either way", and borrowing the Weak Sell gold for it
+# would read as a verdict. Named here, beside the bands, so the card and the
+# market table cannot drift on either the wording or the colour.
+NO_SIGNAL = "No Signal"
+NO_SIGNAL_COLOR = "#6B7280"
+
 
 # ---------------------------------------------------------------------------
 # Blending

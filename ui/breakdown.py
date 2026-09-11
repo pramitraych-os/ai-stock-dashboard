@@ -49,6 +49,8 @@ _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
+import market_scan  # noqa: E402  (for the shared indicator reader)
+
 from ui.price_chart import currency_symbol_for  # noqa: E402
 
 # ---------------------------------------------------------------------------
@@ -70,11 +72,12 @@ RSI_OVERSOLD = 30.0
 # from it would over-read the data. Percent of the slower average.
 MA_FLAT_BAND_PCT = 0.25
 
-# The moving averages compared for the trend row. Same pair the chart overlays,
-# so the table's verdict and the two lines a reader can see agree by
-# construction.
-MA_FAST_COLUMN, MA_FAST_PERIOD = "SMA_20", 20
-MA_SLOW_COLUMN, MA_SLOW_PERIOD = "SMA_50", 50
+# The moving averages compared for the trend row. Taken from ``market_scan``,
+# which builds the overview table's Trend column from the same pair, so this row
+# and that column can never describe different averages. Same pair the chart
+# overlays, so the verdict and the two lines a reader can see agree too.
+MA_FAST_COLUMN, MA_FAST_PERIOD = market_scan.MA_FAST_COLUMN, market_scan.MA_FAST_PERIOD
+MA_SLOW_COLUMN, MA_SLOW_PERIOD = market_scan.MA_SLOW_COLUMN, market_scan.MA_SLOW_PERIOD
 
 
 # ---------------------------------------------------------------------------
@@ -104,6 +107,10 @@ ML_STATUS_NOTES = {
 # Same idea for the sentiment leg, keyed by the statuses
 # ``sentiment_engine.get_llm_sentiment_score`` documents.
 SENTIMENT_STATUS_NOTES = {
+    "no_data": (
+        "No price history for this ticker, so the scan skipped the sentiment "
+        "leg rather than paying for a reading on a symbol that does not resolve."
+    ),
     "no_news": "No recent headlines found for this ticker, so the score is neutral.",
     "no_api_key": (
         "No LLM credentials found. Set ANTHROPIC_API_KEY or OPENAI_API_KEY in your "
@@ -224,11 +231,9 @@ def _sentiment_reading(value: float | None) -> str:
 def _latest_value(bars: pd.DataFrame, column: str) -> float | None:
     """Reads the most recent usable value of one indicator column.
 
-    Takes the last *non-null* value rather than the last row's: a frame built
-    with ``add_technical_indicators(dropna=False)`` keeps its warm-up rows, and
-    a short window can leave the longest indicator undefined on the final bar.
-    Reporting the most recent value that exists beats reporting ``n/a`` for an
-    indicator the frame does carry.
+    Delegates to ``market_scan.latest_value``, which the overview table's rows
+    are built with, so a reading here and the same reading in the table's column
+    are produced by one piece of code rather than two that agree today.
 
     Parameters:
     - bars (pd.DataFrame): The indicator frame.
@@ -237,13 +242,7 @@ def _latest_value(bars: pd.DataFrame, column: str) -> float | None:
     Returns:
     - float | None: The value, or None when the column is absent or empty.
     """
-    if bars is None or bars.empty or column not in bars.columns:
-        return None
-
-    values = pd.to_numeric(bars[column], errors="coerce").dropna()
-    if values.empty:
-        return None
-    return float(values.iloc[-1])
+    return market_scan.latest_value(bars, column)
 
 
 def _as_of_label(bars: pd.DataFrame) -> str | None:

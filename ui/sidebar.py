@@ -3,6 +3,12 @@
 Two widgets can name a ticker -- the preset dropdown and the free-text box --
 so this module owns the precedence rule between them and hands the page a
 single resolved :class:`Selection` instead of three loose widget values.
+
+A third thing can *also* name a ticker: clicking a row in the market table. It
+does not get a precedence rule of its own. Instead :func:`focus_ticker` writes
+the click into these two widgets' own session state, so the sidebar stays the
+single source of truth for what is being analyzed and the dropdown visibly
+follows the click rather than silently disagreeing with it.
 """
 
 from __future__ import annotations
@@ -18,8 +24,14 @@ from ui.config import (
     MIN_LOOKBACK_FOR_TRAINING,
     TICKER_UNIVERSE,
     lookback_days_for,
+    ticker_for,
     validate_ticker,
 )
+
+# Session-state keys for the two ticker widgets. Named rather than left implicit
+# because :func:`focus_ticker` writes to them from outside this module.
+PRESET_KEY = "sidebar_preset_ticker"
+CUSTOM_KEY = "sidebar_custom_ticker"
 
 
 @dataclass(frozen=True)
@@ -65,12 +77,41 @@ def _default_ticker_index() -> int:
     return 0
 
 
+def focus_ticker(symbol: str) -> None:
+    """Points the sidebar's controls at ``symbol``.
+
+    Must be called *before* :func:`render_sidebar` in the same script run:
+    Streamlit refuses to let a widget's state be reassigned once that widget has
+    been instantiated, and setting it beforehand is what makes the dropdown come
+    up already showing the requested symbol.
+
+    A preset symbol goes into the dropdown and the custom box is cleared, so the
+    box cannot keep overriding the dropdown with a stale entry -- without that,
+    clicking a table row while something was typed in the box would appear to do
+    nothing. A symbol outside the universe has no dropdown entry to select, so it
+    goes into the box instead, where it wins on its own merits.
+
+    Parameters:
+    - symbol (str): The symbol to analyze next.
+    """
+    entry = ticker_for(symbol)
+
+    if entry is None:
+        st.session_state[CUSTOM_KEY] = str(symbol).strip().upper()
+        return
+
+    st.session_state[PRESET_KEY] = entry
+    st.session_state[CUSTOM_KEY] = ""
+
+
 def _render_header() -> None:
     """Writes the sidebar's title and one-line description of the dashboard."""
     st.sidebar.title("AI Stock Analysis")
+    # Describes the controls, not the app -- the page's own caption covers what
+    # the dashboard does, and saying it twice on one screen just costs space.
     st.sidebar.caption(
-        "Blends a technical ML score with LLM news sentiment into a single "
-        "buy/sell signal for US and Indian equities."
+        "Choose the stock the detail sections analyze, and how much history "
+        "they read. The market table above them always covers the full universe."
     )
     st.sidebar.divider()
 
@@ -95,14 +136,15 @@ def render_sidebar() -> Selection:
         index=_default_ticker_index(),
         format_func=lambda entry: entry.label,
         help="Large-cap US and NSE-listed names with enough history and news flow.",
+        key=PRESET_KEY,
     )
 
     typed = st.sidebar.text_input(
         "Or enter a custom ticker",
-        value="",
-        placeholder="e.g. NFLX or WIPRO.NS",
+        placeholder="e.g. PLTR or WIPRO.NS",
         help="Any yfinance symbol. Indian listings need the '.NS' suffix. "
         "Overrides the dropdown while it is filled in.",
+        key=CUSTOM_KEY,
     )
 
     custom, error = validate_ticker(typed)

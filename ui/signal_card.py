@@ -65,8 +65,10 @@ TILE_OPACITY_ON_DARK = 0.18
 TILE_OPACITY_ON_LIGHT = 0.07
 
 # Tint used when there is no score to show at all, which is a different
-# statement from a neutral score and should not borrow a band's colour.
-UNAVAILABLE_TINT = "#6B7280"
+# statement from a neutral score and should not borrow a band's colour. Taken
+# from ``signal_blender`` alongside the six band colours it sits beside, so the
+# card and the market table cannot end up with two different greys.
+UNAVAILABLE_TINT = signal_blender.NO_SIGNAL_COLOR
 
 
 @dataclass(frozen=True)
@@ -203,6 +205,24 @@ def _ink_for(background: str) -> _Ink:
         tile=f"rgba(0,0,0,{tile_opacity})",
         line="rgba(255,255,255,0.22)" if ink == INK_ON_DARK else "rgba(0,0,0,0.14)",
     )
+
+
+def ink_on(background: str) -> str:
+    """Returns the readable text colour for a background tint.
+
+    The card's own contrast measurement, exposed for anything else that tints a
+    surface with a band colour -- above all the market table, whose Signal cells
+    paint the same six hexes and would otherwise need their own copy of the
+    dark/pale decision to keep white text off pale green.
+
+    Parameters:
+    - background (str): The tint as ``'#RRGGBB'``.
+
+    Returns:
+    - str: :data:`INK_ON_DARK` or :data:`INK_ON_LIGHT`, whichever contrasts
+      better against ``background``.
+    """
+    return _ink_for(background).text
 
 
 # ---------------------------------------------------------------------------
@@ -427,7 +447,11 @@ def render_signal_card(
     unavailable = blended_score is None or not math.isfinite(float(blended_score))
 
     if unavailable:
-        verdict = {"blended_score": None, "signal": "No Signal", "color": UNAVAILABLE_TINT}
+        verdict = {
+            "blended_score": None,
+            "signal": signal_blender.NO_SIGNAL,
+            "color": UNAVAILABLE_TINT,
+        }
     else:
         verdict = signal_blender.get_dashboard_signal(float(blended_score))
 
