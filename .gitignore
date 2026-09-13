@@ -16,9 +16,10 @@ dist/
 .pytest_cache/
 .mypy_cache/
 
-# Environment variables
+# Environment variables and secrets
 .env
 .env.local
+.streamlit/secrets.toml
 
 # Editor / OS
 .vscode/

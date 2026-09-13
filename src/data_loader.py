@@ -5,8 +5,20 @@ import os
 import pandas as pd
 import yfinance as yf
 
+import config
+
 # Directory where persisted data files are written
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
+
+# Applied once at import time: unset values leave yfinance's own defaults
+# (no proxy, its built-in retry count) untouched.
+_yfinance_kwargs = {}
+if config.YFINANCE_PROXY:
+    _yfinance_kwargs["proxy"] = config.YFINANCE_PROXY
+if config.YFINANCE_RETRIES is not None:
+    _yfinance_kwargs["retries"] = config.YFINANCE_RETRIES
+if _yfinance_kwargs:
+    yf.set_config(**_yfinance_kwargs)
 
 
 def fetch_stock_data(

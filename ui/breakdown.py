@@ -114,7 +114,7 @@ SENTIMENT_STATUS_NOTES = {
     "no_news": "No recent headlines found for this ticker, so the score is neutral.",
     "no_api_key": (
         "No LLM credentials found. Set ANTHROPIC_API_KEY or OPENAI_API_KEY in your "
-        "environment or a .env file to enable sentiment scoring."
+        "environment, a .env file, or Streamlit secrets to enable sentiment scoring."
     ),
     "auth_error": "The LLM provider rejected the API key.",
     "rate_limited": "The LLM provider rate-limited the request. Try again shortly.",

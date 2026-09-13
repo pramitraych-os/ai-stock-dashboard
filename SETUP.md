@@ -27,8 +27,16 @@ pip install -r requirements.txt
 
 ### 3. Configure LLM API Keys (for news sentiment)
 
-[`src/sentiment_engine.py`](src/sentiment_engine.py) scores news sentiment with an LLM.
-Create a `.env` file at the project root (it is git-ignored) with **one** of:
+All secrets and config are resolved centrally in [`config.py`](config.py), which
+[`src/sentiment_engine.py`](src/sentiment_engine.py) and
+[`src/data_loader.py`](src/data_loader.py) read from rather than touching
+environment variables directly.
+
+**Local development:** copy the template and fill in real values:
+
+```bash
+cp .env.example .env
+```
 
 ```bash
 # Anthropic Claude
@@ -38,7 +46,16 @@ ANTHROPIC_API_KEY=your_key_here
 OPENAI_API_KEY=your_key_here
 ```
 
-Optional overrides:
+`.env` is git-ignored, so real keys never get committed. See `.env.example`
+for the full list of optional variables.
+
+**Streamlit Community Cloud:** there's no `.env` file in a deployed app, so
+`config.py` falls back to `st.secrets` for the same variable names. Set them
+under the app's **Settings -> Secrets** in the same `KEY = "value"` TOML
+format Streamlit expects. (A local `.streamlit/secrets.toml` works the same
+way and is also git-ignored, useful for testing the Cloud path locally.)
+
+Optional overrides (set the same way, locally or in `st.secrets`):
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
@@ -46,6 +63,8 @@ Optional overrides:
 | `CLAUDE_MODEL` | `claude-opus-5` | Claude model id |
 | `CLAUDE_EFFORT` | `medium` | Claude reasoning depth: `low`, `medium`, `high`, `xhigh` or `max` |
 | `OPENAI_MODEL` | `gpt-4o-mini` | OpenAI model id |
+| `YFINANCE_PROXY` | unset | Proxy URL for yfinance's requests |
+| `YFINANCE_RETRIES` | unset (yfinance's own default) | Retry count for yfinance's requests |
 
 Without a key the engine still runs: news fetching needs no credentials, and
 scoring falls back to a neutral `0.0` with `status="no_api_key"`.
@@ -94,9 +113,11 @@ ai-stock-dashboard/
 │   ├── price_chart.py          # Candlestick + volume chart
 │   └── breakdown.py            # ML / sentiment component columns
 ├── app.py                      # Streamlit entry point
+├── config.py                   # Centralized secrets/config: .env locally, st.secrets on Cloud
 ├── market_scan.py              # Multi-ticker scan behind the overview table
 ├── run_analysis.py             # End-to-end analysis driver (CLI + library)
-├── .env                        # API keys (git-ignored, create yourself)
+├── .env                        # API keys (git-ignored, create from .env.example)
+├── .env.example                # Template for .env -- safe to commit
 ├── requirements.txt            # Python dependencies
 ├── README.md                   # Project documentation
 └── SETUP.md                    # This setup guide

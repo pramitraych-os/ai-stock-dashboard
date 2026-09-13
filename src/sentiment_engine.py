@@ -21,9 +21,9 @@ Two providers are supported:
   :mod:`requests`.
 
 Whichever key is present is used; ``SENTIMENT_LLM_PROVIDER`` (``"claude"`` or
-``"openai"``) forces a choice when both are set. Keys are read from the
-environment, with a ``.env`` file at the project root loaded automatically if
-:mod:`dotenv` is installed.
+``"openai"``) forces a choice when both are set. Keys are resolved through
+:mod:`config` -- a real environment variable or ``.env`` file locally, falling
+back to ``st.secrets`` when deployed on Streamlit Community Cloud.
 
 Every failure mode is non-fatal by design: a missing key, no available news, a
 rate limit, or an unparseable reply all return a neutral ``0.0`` score with a
@@ -35,7 +35,6 @@ from __future__ import annotations
 
 import html
 import json
-import os
 import re
 import time
 import xml.etree.ElementTree as ET
@@ -43,12 +42,7 @@ from email.utils import parsedate_to_datetime
 
 import requests
 
-try:  # Optional: load ``.env`` so API keys don't have to be exported manually.
-    from dotenv import load_dotenv
-
-    load_dotenv()
-except ImportError:  # pragma: no cover - dotenv is declared in requirements.txt
-    pass
+import config
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -436,10 +430,10 @@ def resolve_provider() -> tuple[str, str]:
     - SentimentAPIError: If the requested provider is unknown, or no usable
       API key is configured (status 'no_api_key').
     """
-    claude_key = os.getenv("ANTHROPIC_API_KEY") or os.getenv("CLAUDE_API_KEY") or ""
-    openai_key = os.getenv("OPENAI_API_KEY") or ""
+    claude_key = config.ANTHROPIC_API_KEY or ""
+    openai_key = config.OPENAI_API_KEY or ""
 
-    requested = (os.getenv("SENTIMENT_LLM_PROVIDER") or "").strip().lower()
+    requested = (config.SENTIMENT_LLM_PROVIDER or "").strip().lower()
 
     if requested:
         if requested not in ("claude", "openai"):
@@ -465,7 +459,7 @@ def resolve_provider() -> tuple[str, str]:
 
     raise SentimentAPIError(
         "No LLM API key found. Set ANTHROPIC_API_KEY or OPENAI_API_KEY in your "
-        "environment or in a .env file at the project root.",
+        "environment, in a .env file at the project root, or in Streamlit secrets.",
         status="no_api_key",
     )
 
@@ -622,7 +616,7 @@ def _call_claude(prompt: str, api_key: str, model: str) -> str:
             # Claude models. Score stability comes from the scoring guidance
             # in the prompt instead.
             output_config={
-                "effort": os.getenv("CLAUDE_EFFORT") or DEFAULT_CLAUDE_EFFORT,
+                "effort": config.CLAUDE_EFFORT or DEFAULT_CLAUDE_EFFORT,
                 # Native JSON mode, so the reply needs no cleanup.
                 "format": {"type": "json_schema", "schema": SENTIMENT_JSON_SCHEMA},
             },
@@ -717,12 +711,8 @@ def _resolve_model(provider: str) -> str:
     - str: The configured model id, or the provider's documented default.
     """
     if provider == "claude":
-        return (
-            os.getenv("CLAUDE_MODEL")
-            or os.getenv("ANTHROPIC_MODEL")
-            or DEFAULT_CLAUDE_MODEL
-        )
-    return os.getenv("OPENAI_MODEL") or DEFAULT_OPENAI_MODEL
+        return config.CLAUDE_MODEL or DEFAULT_CLAUDE_MODEL
+    return config.OPENAI_MODEL or DEFAULT_OPENAI_MODEL
 
 
 def _call_llm(prompt: str, provider: str, api_key: str, model: str) -> str:
