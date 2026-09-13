@@ -116,6 +116,41 @@ def _render_header() -> None:
     st.sidebar.divider()
 
 
+def _render_refresh_control() -> None:
+    """Renders the manual "Refresh Data" button.
+
+    Every fetch and paid LLM call in the pipeline -- price bars
+    (``data_loader.fetch_stock_data``), headlines
+    (``sentiment_engine.fetch_stock_news``), and the Claude/OpenAI verdict
+    (``sentiment_engine.get_llm_sentiment_score``), plus the orchestration
+    cache in ``app.load_scan_row`` -- sits behind ``st.cache_data``, so the
+    dashboard can go on serving an hour-old (or half-hour-old) read of a
+    ticker rather than re-fetching and re-scoring it on every rerun. That's
+    the point of the cache, but it means there is otherwise no way to force a
+    genuinely fresh read without waiting out the TTL.
+
+    ``st.cache_data.clear()`` drops every ``cache_data`` entry across the
+    app -- not just this ticker's -- which is the right scope for a button
+    whose whole job is "I want current numbers, not cached ones." The
+    ``st.cache_resource``-cached model pipelines (``ml_engine.load_model``)
+    are deliberately left untouched: a saved model doesn't go stale the way a
+    price quote does, so clearing it here would only buy an expensive,
+    pointless retrain.
+    """
+    if st.sidebar.button(
+        "🔄 Refresh Data",
+        use_container_width=True,
+        help=(
+            "Clear cached prices, headlines and sentiment scores, then "
+            "re-fetch and re-score everything on this page."
+        ),
+    ):
+        st.cache_data.clear()
+        st.rerun()
+
+    st.sidebar.divider()
+
+
 def render_sidebar() -> Selection:
     """Renders the sidebar controls and resolves them into one selection.
 
@@ -127,6 +162,7 @@ def render_sidebar() -> Selection:
     - Selection: The resolved ticker, its origin, and the lookback window.
     """
     _render_header()
+    _render_refresh_control()
 
     st.sidebar.subheader("Stock")
 

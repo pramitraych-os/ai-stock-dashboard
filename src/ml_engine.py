@@ -28,6 +28,7 @@ import os
 import joblib
 import numpy as np
 import pandas as pd
+import streamlit as st
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.impute import SimpleImputer
 from sklearn.metrics import accuracy_score, roc_auc_score
@@ -430,8 +431,20 @@ def save_model(model: Pipeline, ticker: str, model_dir: str = MODEL_DIR) -> str:
     return file_path
 
 
+@st.cache_resource(show_spinner=False)
 def load_model(ticker: str, model_dir: str = MODEL_DIR) -> Pipeline:
     """Loads a previously saved pipeline from disk.
+
+    Cached by reference per (ticker, model_dir): a fitted Pipeline is a
+    non-trivial object to deserialize with joblib and has no business being
+    re-read from disk on every rerun. ``cache_resource`` (not ``cache_data``)
+    is deliberate here -- the pipeline is handed back as the same in-memory
+    object rather than pickled and copied on each call, which is both faster
+    and avoids Streamlit trying to hash a scikit-learn object.
+
+    A failed lookup (no file yet) is not cached -- Streamlit only caches
+    successful returns -- so the first training run's write to disk is picked
+    up by the very next call instead of being masked by a cached failure.
 
     Parameters:
     - ticker (str): The stock symbol whose model should be loaded.

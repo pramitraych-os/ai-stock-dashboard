@@ -3,6 +3,7 @@
 import datetime
 import os
 import pandas as pd
+import streamlit as st
 import yfinance as yf
 
 import config
@@ -21,10 +22,17 @@ if _yfinance_kwargs:
     yf.set_config(**_yfinance_kwargs)
 
 
+@st.cache_data(ttl=3600, show_spinner=False)
 def fetch_stock_data(
     ticker: str, start_date: str, end_date: str
 ) -> pd.DataFrame:
     """Fetches historical daily closing prices and trading volume for a given ticker symbol.
+
+    Cached for an hour per (ticker, start_date, end_date): yfinance is the
+    slowest, most rate-limit-prone step in the pipeline, and daily bars don't
+    change intra-hour, so repeat calls for the same window are served from
+    memory instead of hitting the network again. ``st.cache_data.clear()``
+    (wired to the sidebar's "Refresh Data" button) drops this early.
 
     Parameters:
     - ticker (str): The stock symbol (e.g., 'AAPL', 'RELIANCE.NS').

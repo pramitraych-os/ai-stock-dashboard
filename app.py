@@ -14,21 +14,36 @@ implemented here is the *caching* and *concurrency* between the two.
 Streamlit re-runs this module top to bottom on every widget interaction, and
 scoring one ticker is expensive in two different ways -- the ML leg may train a
 Random Forest, the sentiment leg makes a paid LLM call over the network -- so
-the whole page hangs on one cache:
+caching happens at two layers:
 
-* :func:`load_scan_row` scores a single ticker and is cached per *symbol*. That
-  is the granularity that matters. The overview table and the detail sections
-  below it both go through it, so the stock a reader clicks in the table is
-  already scored by the time the card underneath renders -- no second fetch, no
-  second LLM call, and no way for the two halves of the page to disagree about
-  a number.
-* The cache key is the symbol and the pipeline's own settings, deliberately
-  *not* the chart's date range. Changing the range therefore re-slices bars
-  already in memory rather than re-running anything; news flow has nothing to
-  do with how far back the candles go.
+* Each expensive step caches itself, at the module that does the work: price
+  bars (``data_loader.fetch_stock_data``, ``@st.cache_data(ttl=3600)``),
+  headlines (``sentiment_engine.fetch_stock_news``, same TTL), the Claude/
+  OpenAI verdict (``sentiment_engine.get_llm_sentiment_score``, same TTL), the
+  Anthropic client (``sentiment_engine._get_anthropic_client``,
+  ``@st.cache_resource``, so it isn't rebuilt per call), and the trained
+  Random Forest (``ml_engine.load_model``, ``@st.cache_resource``). Any one of
+  these can be reused independently of the others.
+* :func:`load_scan_row` wraps the whole pipeline for one ticker on top of that
+  and is cached per *symbol*. That is the granularity the *page* cares about:
+  the overview table and the detail sections below it both go through it, so
+  the stock a reader clicks in the table is already scored by the time the
+  card underneath renders, and there is no way for the two halves of the page
+  to disagree about a number. Its own TTL is shorter than the stage caches
+  underneath it (30 minutes vs. an hour) because it also governs how long a
+  *blended verdict* is shown as current, not just how long any one input is
+  reused.
+* The cache key for both layers is the symbol and the pipeline's own settings,
+  deliberately *not* the chart's date range. Changing the range therefore
+  re-slices bars already in memory rather than re-running anything; news flow
+  has nothing to do with how far back the candles go.
 * :func:`run_market_scan` fans the scan out across a thread pool, because a row
   is almost pure waiting -- on yfinance, then on the LLM. Twenty symbols scored
   one at a time would be minutes of idle sockets.
+* The sidebar's "Refresh Data" button (``ui.sidebar._render_refresh_control``)
+  calls ``st.cache_data.clear()`` to force a genuinely fresh read on demand,
+  without waiting out any of the TTLs above. It leaves the ``cache_resource``
+  model cache alone -- a saved model doesn't go stale the way a quote does.
 """
 
 from __future__ import annotations
@@ -126,11 +141,14 @@ def load_scan_row(
 ) -> dict:
     """Scores one ticker end to end: bars, indicators, model, news, blend.
 
-    The single expensive call in the app, and the only one. Both the overview
-    table and the detail sections read a ticker through here, so a symbol is
-    fetched once and its headlines scored once per cache window no matter how
-    many parts of the page want them -- and the table's Signal column is
-    literally the same value the card below renders.
+    The orchestration-level cache: everything underneath it (price fetch,
+    news fetch, LLM scoring, model load) already caches itself, but this is
+    still worth its own cache entry so the overview table and the detail
+    sections read a ticker through the exact same call. That guarantees a
+    symbol is fetched and scored once per cache window no matter how many
+    parts of the page want it, and that the table's Signal column is
+    literally the same value the card below renders -- not just the same
+    inputs recomputed twice into (hopefully) the same blend.
 
     Never raises: ``market_scan.scan_ticker`` reports a failed fetch or a
     failed leg as a row with no verdict and the reason in ``error``.

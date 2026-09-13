@@ -41,6 +41,7 @@ import xml.etree.ElementTree as ET
 from email.utils import parsedate_to_datetime
 
 import requests
+import streamlit as st
 
 import config
 
@@ -296,11 +297,17 @@ def _fetch_news_via_rss(ticker: str, limit: int) -> list[dict]:
     return articles
 
 
+@st.cache_data(ttl=3600, show_spinner=False)
 def fetch_stock_news(ticker: str, limit: int = 10) -> list[dict]:
     """Fetches recent news headlines and summaries for a given ticker symbol.
 
     Tries yfinance first and falls back to the Yahoo Finance RSS feed if it
     yields nothing. Neither source requires an API key.
+
+    Cached for an hour per (ticker, limit): headlines don't turn over
+    fast enough to justify re-scraping on every rerun, and this is also what
+    keeps a cache miss on :func:`get_llm_sentiment_score` -- a TTL expiry, or
+    a different ``limit`` -- from re-fetching news that's still fresh here.
 
     Parameters:
     - ticker (str): The stock symbol (e.g., 'AAPL', 'RELIANCE.NS').
@@ -573,6 +580,44 @@ SENTIMENT_JSON_SCHEMA = {
 }
 
 
+@st.cache_resource(show_spinner=False)
+def _get_anthropic_client(api_key: str) -> "anthropic.Anthropic":
+    """Builds (once) and reuses the Anthropic SDK client.
+
+    ``anthropic.Anthropic`` wraps an ``httpx`` client with its own connection
+    pool; rebuilding it per sentiment call -- as the naive version of
+    :func:`_call_claude` did -- throws that pool away every time instead of
+    reusing warm connections across tickers in the same scan. ``cache_resource``
+    is the right tool here rather than ``cache_data``: this returns the same
+    live object by reference and never tries to pickle/hash it, which is
+    exactly what a network client needs (it is also safe to share across the
+    scan's worker threads, same as a DB connection pool would be).
+
+    Parameters:
+    - api_key (str): Anthropic API key; a different key gets its own client.
+
+    Returns:
+    - anthropic.Anthropic: A client ready to call ``.beta.messages.create``.
+
+    Raises:
+    - SentimentAPIError: If the ``anthropic`` package is not installed.
+    """
+    try:
+        import anthropic
+    except ImportError as e:
+        raise SentimentAPIError(
+            "The 'anthropic' package is required for Claude sentiment scoring. "
+            "Install it with 'pip install anthropic'.",
+            status="config_error",
+        ) from e
+
+    return anthropic.Anthropic(
+        api_key=api_key,
+        timeout=REQUEST_TIMEOUT_SECONDS,
+        max_retries=MAX_RETRIES,
+    )
+
+
 def _call_claude(prompt: str, api_key: str, model: str) -> str:
     """Sends the prompt to the Anthropic Messages API via the official SDK.
 
@@ -591,20 +636,8 @@ def _call_claude(prompt: str, api_key: str, model: str) -> str:
     Raises:
     - SentimentAPIError: On an API failure, a refusal, or an empty response.
     """
-    try:
-        import anthropic
-    except ImportError as e:
-        raise SentimentAPIError(
-            "The 'anthropic' package is required for Claude sentiment scoring. "
-            "Install it with 'pip install anthropic'.",
-            status="config_error",
-        ) from e
-
-    client = anthropic.Anthropic(
-        api_key=api_key,
-        timeout=REQUEST_TIMEOUT_SECONDS,
-        max_retries=MAX_RETRIES,
-    )
+    client = _get_anthropic_client(api_key)
+    import anthropic  # Safe: _get_anthropic_client already proved this import works.
 
     try:
         response = client.beta.messages.create(
@@ -934,6 +967,7 @@ def _build_result(
     }
 
 
+@st.cache_data(ttl=3600, show_spinner=False)
 def get_llm_sentiment_score(ticker: str, limit: int = 10) -> dict:
     """Scores recent news sentiment for a ticker using an LLM.
 
@@ -946,6 +980,13 @@ def get_llm_sentiment_score(ticker: str, limit: int = 10) -> dict:
     or an unparseable reply all yield a neutral ``0.0`` score with a ``status``
     describing what happened. Inspect ``status`` to tell a real neutral reading
     ('ok') from a fallback.
+
+    Cached for an hour per (ticker, limit) -- this is the call that spends
+    Claude/OpenAI tokens, so a repeat request for the same ticker within the
+    window returns the prior verdict for free instead of paying for it again.
+    A caller that wants a guaranteed-fresh read (rather than "fresh within the
+    last hour") should clear the cache first, e.g. via the sidebar's
+    "Refresh Data" button.
 
     Parameters:
     - ticker (str): The stock symbol (e.g., 'AAPL', 'RELIANCE.NS').
