@@ -118,8 +118,13 @@ SENTIMENT_STATUS_NOTES = {
     ),
     "auth_error": "The LLM provider rejected the API key.",
     "rate_limited": "The LLM provider rate-limited the request. Try again shortly.",
+    "quota_exceeded": (
+        "The Anthropic account has run out of API credits. Add credits or "
+        "upgrade the plan in the Anthropic Console -- retrying will not help "
+        "until then."
+    ),
     "api_error": "The LLM provider returned an error.",
-    "network_error": "Could not reach the LLM provider.",
+    "network_error": "Could not reach the LLM provider, or it timed out.",
     "parse_error": "The LLM's reply could not be parsed as a score.",
     "config_error": "The configured LLM provider is not usable.",
     "invalid_ticker": "The ticker symbol was rejected by the sentiment stage.",

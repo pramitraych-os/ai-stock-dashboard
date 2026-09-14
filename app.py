@@ -243,26 +243,66 @@ def window_bars(bars: pd.DataFrame, lookback_days: int) -> pd.DataFrame:
     return windowed.reset_index(drop=True)
 
 
-def _degraded_legs(row: dict) -> str | None:
-    """Names the scoring legs that fell back to a neutral score, if any.
+# Copy for each ``score_basis`` that is not a plain 'blended' verdict.
+# ``market_scan.scan_ticker`` already excludes a failed leg's neutral
+# stand-in from the number itself; this is what tells the reader *why* the
+# score in front of them is a single leg rather than the usual 50/50 blend.
+_SCORE_BASIS_BADGES: dict[str, tuple[str, str]] = {
+    "technical_only": (
+        "Technical-only signal - Claude sentiment unavailable",
+        "orange",
+    ),
+    "sentiment_only": (
+        "Sentiment-only signal - ML model unavailable",
+        "orange",
+    ),
+    "unavailable": (
+        "No signal - both the ML and sentiment legs failed",
+        "red",
+    ),
+}
+
+
+def _render_score_basis_badge(row: dict) -> None:
+    """Shows a badge when the signal card's score is not the usual full blend.
 
     Parameters:
     - row (dict): A scan row from :func:`load_scan_row`.
-
-    Returns:
-    - str | None: ``'ML'``, ``'sentiment'`` or ``'ML and sentiment'``, or None
-      when both legs completed. A row with no verdict returns None too: the card
-      already shows "No Signal" there, and there is no blend to qualify.
     """
-    if row["blended_score"] is None:
-        return None
+    badge = _SCORE_BASIS_BADGES.get(row["score_basis"])
+    if badge:
+        label, color = badge
+        st.badge(label, icon="⚠️", color=color)
 
-    legs = [
-        name
-        for name, leg in (("ML", row["ml"]), ("sentiment", row["sentiment"]))
-        if leg["status"] != "ok"
-    ]
-    return " and ".join(legs) if legs else None
+
+def _render_sentiment_service_notice(rows: list[dict]) -> None:
+    """Flags a dashboard-wide Claude problem, not just one ticker's.
+
+    A rate limit or an exhausted credit balance affects every row the scan
+    just ran, not only the one a reader happens to be looking at, so this is
+    checked once across the whole scan and shown above the table -- a reader
+    scrolling straight to one stock's card would otherwise have no reason to
+    suspect the sentiment leg is down dashboard-wide rather than unlucky for
+    that one symbol.
+
+    Parameters:
+    - rows (list[dict]): The scan results from :func:`run_market_scan`.
+    """
+    statuses = {row["sentiment"]["status"] for row in rows}
+
+    if "quota_exceeded" in statuses:
+        st.error(
+            "Anthropic API credits are exhausted, so sentiment scoring is "
+            "paused for every stock below. Add credits or upgrade the plan "
+            "in the Anthropic Console -- retrying will not help until then.",
+            icon="🚫",
+        )
+    elif "rate_limited" in statuses:
+        st.warning(
+            "Anthropic API rate limit reached. Sentiment scores below may be "
+            "stale or missing until it clears; try 'Refresh Data' shortly.",
+            icon="⏳",
+        )
 
 
 def main() -> None:
@@ -287,6 +327,10 @@ def main() -> None:
 
     with slots.market_table:
         scanned = run_market_scan(UNIVERSE_SYMBOLS)
+        # Dashboard-wide, so it belongs above the table rather than buried in
+        # one ticker's card -- a reader who never opens this ticker's detail
+        # section should still learn that Claude is down for everyone.
+        _render_sentiment_service_notice(scanned)
         market_table.render_market_table(
             scanned, top_n=MARKET_TABLE_SIZE, focused=selection.ticker
         )
@@ -312,19 +356,21 @@ def main() -> None:
             ),
         )
 
-        degraded = _degraded_legs(row)
-        if degraded:
-            # The blend still ran -- ``blend_scores`` has no notion of a missing
-            # leg -- so the headline is a real number computed from a neutral
-            # stand-in. Saying which leg is standing in keeps the verdict from
-            # over-claiming; the reason why is in the breakdown below.
-            st.caption(
-                f"Blended with a neutral stand-in for the {degraded} leg. See the "
-                f"breakdown below."
-            )
+        # 'blended' needs no badge -- that is the normal case. Anything else
+        # means the score above is a single leg standing alone (or missing
+        # entirely), not the usual weighted blend, and says so plainly rather
+        # than letting the number pass for more than it is.
+        _render_score_basis_badge(row)
 
-        if row["warning"]:
-            st.warning(row["warning"])
+        # A row with no verdict at all (bars.empty) sets 'error'; a row that
+        # scored but on degraded inputs (e.g. a stale cached-CSV fallback)
+        # only sets 'warning'. The first means there is nothing usable to
+        # show and gets the more severe treatment; the second means the
+        # numbers above are real, just worth a caveat.
+        if row["error"]:
+            st.error(row["error"], icon="🚫")
+        elif row["warning"]:
+            st.warning(row["warning"], icon="⚠️")
 
     with slots.price_chart:
         visible = window_bars(row["bars"], selection.lookback_days)

@@ -247,7 +247,10 @@ def _row(
       synthesizes a ``'no_data'`` one.
     - blended_score (float | None): The blended score, or None when there was
       nothing to blend.
-    - ml_weight (float): Weighting applied to the blend.
+    - ml_weight (float): Weighting applied to the blend. Only meaningful when
+      ``score_basis`` is ``'blended'``; :func:`scan_ticker` passes ``1.0`` or
+      ``0.0`` here when only one leg is usable, so this reports what was
+      actually applied rather than the caller's configured default.
     - error (str | None): Why the row has no verdict, if it has none.
 
     Returns:
@@ -286,6 +289,23 @@ def _row(
         verdict = signal_blender.get_dashboard_signal(blended_score)
         signal, color = verdict["signal"], verdict["color"]
 
+    # Names which leg(s) actually back ``blended_score``, so the UI can badge
+    # a single-leg verdict instead of presenting it as the usual 50/50 blend.
+    # See :func:`scan_ticker`: ``blended_score`` is only non-None here when at
+    # least one leg is ``'ok'``, so "neither leg ok" and "no score" coincide.
+    ml_ok = ml["status"] == "ok"
+    sentiment_ok = sentiment["status"] == "ok"
+    if blended_score is None:
+        score_basis = "unavailable"
+    elif ml_ok and sentiment_ok:
+        score_basis = "blended"
+    elif ml_ok:
+        score_basis = "technical_only"
+    elif sentiment_ok:
+        score_basis = "sentiment_only"
+    else:
+        score_basis = "unavailable"
+
     return {
         "ticker": ticker,
         "bars": frame,
@@ -300,6 +320,7 @@ def _row(
         "sentiment": sentiment,
         "blended_score": blended_score,
         "ml_weight": float(ml_weight),
+        "score_basis": score_basis,
         "signal": signal,
         "color": color,
         "error": error,
@@ -368,8 +389,13 @@ def scan_ticker(
       - 'ml' (dict): ``run_analysis.run_ml_inference``'s payload.
       - 'sentiment' (dict): ``get_llm_sentiment_score``'s payload.
       - 'blended_score' (float | None): The blended score, or None when there
-        were no bars to analyze.
-      - 'ml_weight' (float): Weighting applied to the blend.
+        were no bars to analyze *or* neither leg produced a real reading.
+      - 'ml_weight' (float): Weighting actually applied to the blend -- see
+        ``score_basis`` below.
+      - 'score_basis' (str): ``'blended'`` when both legs are ``'ok'``,
+        ``'technical_only'`` or ``'sentiment_only'`` when exactly one is (the
+        other's neutral fallback is excluded rather than diluting the score),
+        or ``'unavailable'`` when neither is and there is no verdict.
       - 'signal' (str): One of the six dashboard recommendations, or
         ``signal_blender.NO_SIGNAL``.
       - 'color' (str | None): Hex tint for that signal; None for no signal, so
@@ -386,8 +412,30 @@ def scan_ticker(
     ml = run_analysis.run_ml_inference(symbol, bars, allow_training=allow_training)
     sentiment = run_analysis.run_sentiment_analysis(symbol, news_limit=news_limit)
 
-    blended_score = signal_blender.blend_scores(
-        ml["ml_score"], float(sentiment["sentiment_score"]), ml_weight=ml_weight
+    ml_ok = ml["status"] == "ok"
+    sentiment_ok = sentiment["status"] == "ok"
+
+    # A failed leg's score is a neutral 0.0 stand-in, not a real reading, so
+    # blending it in at the configured weight would silently water down a
+    # perfectly good verdict from the other leg. Falling back to 100% of
+    # whichever leg is actually 'ok' keeps the number honest; the caller
+    # tells the two cases apart via 'score_basis' rather than the number
+    # alone, since a 100%-ML score looks identical to a lucky 50/50 blend.
+    if ml_ok and sentiment_ok:
+        effective_ml_weight = ml_weight
+    elif ml_ok:
+        effective_ml_weight = 1.0
+    elif sentiment_ok:
+        effective_ml_weight = 0.0
+    else:
+        effective_ml_weight = None
+
+    blended_score = (
+        None
+        if effective_ml_weight is None
+        else signal_blender.blend_scores(
+            ml["ml_score"], float(sentiment["sentiment_score"]), ml_weight=effective_ml_weight
+        )
     )
 
     return _row(
@@ -397,7 +445,7 @@ def scan_ticker(
         ml=ml,
         sentiment=sentiment,
         blended_score=blended_score,
-        ml_weight=ml_weight,
+        ml_weight=ml_weight if effective_ml_weight is None else effective_ml_weight,
     )
 
 

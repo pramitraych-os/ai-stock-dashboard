@@ -635,6 +635,11 @@ def _call_claude(prompt: str, api_key: str, model: str) -> str:
 
     Raises:
     - SentimentAPIError: On an API failure, a refusal, or an empty response.
+      ``status`` distinguishes ``'auth_error'``, ``'rate_limited'``,
+      ``'quota_exceeded'`` (out of credits -- retrying will not help),
+      ``'network_error'`` (including a timeout) and the generic
+      ``'api_error'``. Every Anthropic SDK exception is caught somewhere in
+      this chain, so a caller never sees a raw ``anthropic.AnthropicError``.
     """
     client = _get_anthropic_client(api_key)
     import anthropic  # Safe: _get_anthropic_client already proved this import works.
@@ -669,13 +674,24 @@ def _call_claude(prompt: str, api_key: str, model: str) -> str:
             f"Claude rate-limited the request: {e}", status="rate_limited"
         ) from e
     except anthropic.APIStatusError as e:
-        raise SentimentAPIError(
-            f"Claude HTTP {e.status_code}: {_clean_text(str(e.message), 300)}",
-            status="api_error",
-        ) from e
+        detail = _clean_text(str(e.message), 300)
+        # A low-balance account gets a 400 invalid_request_error, not a 429 --
+        # worth its own status so the UI can point at billing rather than
+        # saying "try again shortly" for a condition retrying cannot fix.
+        if e.status_code == 400 and "credit balance" in detail.lower():
+            raise SentimentAPIError(
+                f"Claude account is out of credits: {detail}", status="quota_exceeded"
+            ) from e
+        raise SentimentAPIError(f"Claude HTTP {e.status_code}: {detail}", status="api_error") from e
+    except anthropic.APITimeoutError as e:
+        raise SentimentAPIError(f"Claude request timed out: {e}", status="network_error") from e
     except anthropic.APIConnectionError as e:
-        # Covers APITimeoutError, which subclasses it.
         raise SentimentAPIError(f"Claude request failed: {e}", status="network_error") from e
+    except anthropic.APIError as e:
+        # Catch-all for any other SDK failure not already matched above (e.g.
+        # APIResponseValidationError on a malformed structured-output reply),
+        # so no Anthropic exception can escape this function uncaught.
+        raise SentimentAPIError(f"Claude request failed: {e}", status="api_error") from e
 
     if response.stop_reason == "refusal":
         category = getattr(response.stop_details, "category", None) or "unspecified"
@@ -998,8 +1014,8 @@ def get_llm_sentiment_score(ticker: str, limit: int = 10) -> dict:
       - 'sentiment_score' (float): Score in [-1.0, +1.0]; 0.0 on fallback.
       - 'summary' (list[str]): Bullet points on the key market drivers.
       - 'status' (str): 'ok', 'no_news', 'no_api_key', 'auth_error',
-        'rate_limited', 'api_error', 'network_error', 'parse_error',
-        'config_error' or 'invalid_ticker'.
+        'rate_limited', 'quota_exceeded', 'api_error', 'network_error',
+        'parse_error', 'config_error' or 'invalid_ticker'.
       - 'article_count' (int): Number of articles analyzed.
       - 'provider' (str | None): 'claude' or 'openai'.
       - 'model' (str | None): The model id used.

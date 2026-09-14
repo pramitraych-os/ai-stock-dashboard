@@ -335,7 +335,12 @@ def analyze_ticker(
       - 'latest_close' (float | None): Closing price of that bar.
       - 'ml_score' (float): Raw ML score in [-1, +1].
       - 'ai_score' (float): Raw sentiment score in [-1, +1].
-      - 'ml_weight' (float): Weighting actually applied to the blend.
+      - 'ml_weight' (float): Weighting actually applied to the blend -- see
+        'score_basis'.
+      - 'score_basis' (str): 'blended' when both legs are 'ok',
+        'technical_only' or 'sentiment_only' when only one is (the failed
+        leg's neutral fallback is excluded rather than diluting the score
+        with it).
       - 'blended_score' (float): The combined score in [-1, +1].
       - 'signal' (str): One of the six dashboard recommendations.
       - 'color' (str): Hex colour the UI tints the card with.
@@ -371,9 +376,26 @@ def analyze_ticker(
     sentiment_result = run_sentiment_analysis(ticker, news_limit=news_limit)
     ai_score = float(sentiment_result["sentiment_score"])
 
-    # Step 5: blend the two into the signal the dashboard renders.
-    print(f"[5/5] Blending ml={ml_score:+.4f} and ai={ai_score:+.4f}...")
-    blended_score = signal_blender.blend_scores(ml_score, ai_score, ml_weight=ml_weight)
+    # Step 5: blend the two into the signal the dashboard renders. A leg that
+    # fell back reports a neutral 0.0, which is not a real reading -- blending
+    # it in at the configured weight would water down a good score from the
+    # other leg, so a failed leg is excluded rather than counted at face value.
+    ml_ok = ml_result["status"] == "ok"
+    sentiment_ok = sentiment_result["status"] == "ok"
+
+    if ml_ok and sentiment_ok:
+        effective_ml_weight, score_basis = ml_weight, "blended"
+    elif ml_ok:
+        effective_ml_weight, score_basis = 1.0, "technical_only"
+    elif sentiment_ok:
+        effective_ml_weight, score_basis = 0.0, "sentiment_only"
+    else:
+        # Both neutral: the blend is 0.0 either way, but 'score_basis' says
+        # plainly that it is not a real reading rather than genuine indecision.
+        effective_ml_weight, score_basis = ml_weight, "unavailable"
+
+    print(f"[5/5] Blending ml={ml_score:+.4f} and ai={ai_score:+.4f} ({score_basis})...")
+    blended_score = signal_blender.blend_scores(ml_score, ai_score, ml_weight=effective_ml_weight)
     signal = signal_blender.get_dashboard_signal(blended_score)
 
     as_of, latest_close = _latest_bar(indicator_df)
@@ -384,7 +406,8 @@ def analyze_ticker(
         "latest_close": latest_close,
         "ml_score": round(ml_score, 4),
         "ai_score": round(ai_score, 4),
-        "ml_weight": float(ml_weight),
+        "ml_weight": float(effective_ml_weight),
+        "score_basis": score_basis,
         "blended_score": round(signal["blended_score"], 4),
         "signal": signal["signal"],
         "color": signal["color"],

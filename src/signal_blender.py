@@ -20,6 +20,8 @@ tie-breaker).
 
 from __future__ import annotations
 
+import math
+
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
@@ -61,6 +63,38 @@ NO_SIGNAL_COLOR = "#6B7280"
 # ---------------------------------------------------------------------------
 
 
+def _safe_score(value: object, name: str) -> float:
+    """Coerces an upstream score to a finite float, defaulting to neutral.
+
+    Both callers (``ml_engine`` and ``sentiment_engine``) already guarantee a
+    finite ``0.0`` on failure rather than ``None`` or ``NaN``, so this should
+    never have anything to correct in practice. It exists anyway as the last
+    line of defense before the number reaches the dashboard: a blend is the
+    final step in the pipeline, and a ``TypeError`` here would surface as a
+    raw traceback instead of the neutral reading every upstream stage already
+    promises.
+
+    Parameters:
+    - value (object): The score as received; normally already a plain float.
+    - name (str): Which input this is, for the printed warning.
+
+    Returns:
+    - float: ``value`` as a float, or ``0.0`` if it is missing, non-numeric,
+      or not finite (``NaN``/``inf``).
+    """
+    try:
+        number = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        print(f"Warning: blend_scores got a non-numeric {name} ({value!r}); using 0.0.")
+        return 0.0
+
+    if not math.isfinite(number):
+        print(f"Warning: blend_scores got a non-finite {name} ({value!r}); using 0.0.")
+        return 0.0
+
+    return number
+
+
 def blend_scores(ml_score: float, ai_score: float, ml_weight: float = 0.5) -> float:
     """Blends the ML and AI-sentiment scores into one weighted score.
 
@@ -69,6 +103,12 @@ def blend_scores(ml_score: float, ai_score: float, ml_weight: float = 0.5) -> fl
     sum to 1 and the result stays on the same ``[-1, +1]`` scale as its inputs.
     It is clamped anyway, so a slightly out-of-range input (or a rounding
     artefact) can never leak a score the signal ladder cannot classify.
+
+    Never raises: a missing or non-numeric input degrades to a neutral ``0.0``
+    for that side rather than propagating a ``TypeError`` -- see
+    :func:`_safe_score`. Both inputs are already guaranteed finite floats by
+    the stages that produce them, so this is a safety net, not the primary
+    contract.
 
     Parameters:
     - ml_score (float): Directional score from the ML model, in ``[-1, +1]``.
@@ -79,7 +119,11 @@ def blend_scores(ml_score: float, ai_score: float, ml_weight: float = 0.5) -> fl
     Returns:
     - float: The ``blended_score``, clamped to ``[-1.0, +1.0]``.
     """
-    blended_score = (ml_score * ml_weight) + (ai_score * (1.0 - ml_weight))
+    ml_score = _safe_score(ml_score, "ml_score")
+    ai_score = _safe_score(ai_score, "ai_score")
+    weight = _safe_score(ml_weight, "ml_weight")
+
+    blended_score = (ml_score * weight) + (ai_score * (1.0 - weight))
     # Clamp so downstream consumers -- above all ``get_dashboard_signal`` -- can
     # rely on the declared bounds.
     return float(min(max(blended_score, SCORE_MIN), SCORE_MAX))
