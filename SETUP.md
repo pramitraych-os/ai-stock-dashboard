@@ -118,8 +118,10 @@ ai-stock-dashboard/
 ├── run_analysis.py             # End-to-end analysis driver (CLI + library)
 ├── .env                        # API keys (git-ignored, create from .env.example)
 ├── .env.example                # Template for .env -- safe to commit
-├── requirements.txt            # Python dependencies
-├── README.md                   # Project documentation
+├── .python-version             # Python version this app is built against
+├── .gitignore                  # Excludes .venv/, .env, secrets.toml, models/, etc.
+├── requirements.txt            # Pinned Python dependencies
+├── README.md                   # Project overview + Streamlit Cloud deployment
 └── SETUP.md                    # This setup guide
 ```
 

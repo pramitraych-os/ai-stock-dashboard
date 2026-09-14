@@ -1,13 +1,24 @@
-streamlit>=1.30
+# Pinned to the versions this app is built and tested against, so a fresh
+# install here or on Streamlit Community Cloud reproduces the same
+# environment rather than resolving to whatever is newest on deploy day.
+# Bump deliberately, one package at a time, and re-run the app before
+# committing the new pin.
+
+streamlit==1.62.0
+
 # 5.19 first shipped marker.cornerradius, which the volume bars use.
-plotly>=5.19
-pandas
-yfinance
-numpy
-ta
-scikit-learn
-joblib
-python-dotenv
-requests
+plotly==7.0.0
+
+pandas==3.0.3
+numpy==2.5.1
+yfinance==1.5.1
+ta==0.11.0
+scikit-learn==1.9.0
+joblib==1.5.3
+requests==2.34.2
+
+# Loads ANTHROPIC_API_KEY from a local .env file; see config.py.
+python-dotenv==1.2.2
+
 # Claude sentiment scoring; 1.x is the current major (output_config, effort).
-anthropic>=1.4,<2
+anthropic==1.4.0
