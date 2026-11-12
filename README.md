@@ -1,144 +1,103 @@
-# AI Stock Analysis Dashboard
+# 📈 AI Stock Dashboard
 
-A Streamlit dashboard that scores stocks with two independent signals and
-blends them into one verdict:
+An AI-powered stock market analysis project built with Python. The goal is to explore financial data, analyze stock market trends, and develop an interactive dashboard for stock analysis.
 
-- **Technical** -- a Random Forest trained on price/volume indicators (RSI,
-  moving averages, MACD, Bollinger Bands), producing an `ml_score` in
-  `[-1, +1]`.
-- **Sentiment** -- recent news headlines scored by Anthropic Claude (or
-  OpenAI as a fallback provider), producing an `ai_score` on the same scale.
+## 🚀 Project Overview
 
-The two are blended into a `blended_score` and mapped onto a six-way signal
-ladder from **Strong Sell** to **Strong Buy**. If either leg fails or is
-unavailable, the dashboard falls back to whichever leg *did* succeed rather
-than diluting the verdict with a fake neutral reading, and says so with a
-warning badge.
+The AI Stock Dashboard aims to provide an accessible way to explore stock market data and perform financial analysis using Python.
 
-The **Market Overview** table ranks a preset universe of large-cap US and
-NSE-listed Indian stocks by conviction; the detail section below it unpacks
-one stock at a time -- signal card, price chart, and both component scores
-with their supporting evidence (indicator readings, headlines).
+This project is currently under development.
 
-## Quickstart (local)
+## 🛠️ Technologies Used
+
+- **Python** – Core programming language
+- **Pandas** – Data manipulation and analysis
+- **NumPy** – Numerical computations
+- **yfinance** – Retrieving historical stock market data
+- **python-dotenv** – Environment variable management
+
+## 📂 Project Structure
+
+```text
+ai-stock-dashboard/
+│
+├── src/
+│   └── data_loader.py
+│
+├── requirements.txt
+├── README.md
+└── SETUP.md
+```
+
+## ⚙️ Installation and Setup
+
+### 1. Clone the repository
 
 ```bash
 git clone https://github.com/pramitraych-os/ai-stock-dashboard.git
-cd ai-stock-dashboard
-
-python3 -m venv .venv
-source .venv/bin/activate          # Windows: .venv\Scripts\activate
-
-pip install -r requirements.txt
-
-cp .env.example .env               # then fill in ANTHROPIC_API_KEY, see below
-
-streamlit run app.py
 ```
 
-The app opens at <http://localhost:8501>. See [SETUP.md](SETUP.md) for the
-full walkthrough (project structure, running a one-off CLI analysis, optional
-environment variables, etc.) -- this file covers the essentials plus
-deploying to Streamlit Community Cloud.
-
-## Configuring `ANTHROPIC_API_KEY`
-
-All configuration is resolved centrally in [`config.py`](config.py), so every
-module reads secrets the same way regardless of where the app is running:
-
-1. **Real environment variable / `.env` file** (local development).
-2. **`st.secrets`** (Streamlit Community Cloud, or a local
-   `.streamlit/secrets.toml`).
-
-Neither is required to run the app -- without a key, sentiment scoring falls
-back to a neutral `0.0` and the dashboard runs on the technical signal alone
--- but news sentiment needs one.
-
-**Locally:** copy the template and fill in a real key:
+### 2. Navigate to the project directory
 
 ```bash
-cp .env.example .env
+cd ai-stock-dashboard
 ```
 
-```dotenv
-ANTHROPIC_API_KEY=sk-ant-api03-...
+### 3. Create a virtual environment
+
+```bash
+python3 -m venv .venv
 ```
 
-Get a key from the [Anthropic Console](https://console.anthropic.com/settings/keys).
-`.env` is git-ignored, so the real key never gets committed -- only
-`.env.example`'s placeholder does. See `.env.example` for the full list of
-optional variables (alternate provider, model overrides, yfinance network
-settings).
+### 4. Activate the virtual environment
 
-**On Streamlit Community Cloud:** there is no `.env` file in a deployed app,
-so set the same variable name in the app's **Secrets** instead -- see
-[Deploying to Streamlit Community Cloud](#deploying-to-streamlit-community-cloud)
-below.
+**macOS / Linux:**
 
-## Deploying to Streamlit Community Cloud
+```bash
+source .venv/bin/activate
+```
 
-1. **Push this repository to GitHub** (public or private -- Streamlit
-   Community Cloud can be authorized to access private repos).
+**Windows:**
 
-   ```bash
-   git push origin main
-   ```
+```bash
+.venv\Scripts\activate
+```
 
-   Make sure `requirements.txt` is committed and up to date, and that `.env`
-   is **not** tracked (`git status` should not show it -- `.gitignore`
-   already excludes it).
+### 5. Install dependencies
 
-2. **Sign in to [share.streamlit.io](https://share.streamlit.io)** with your
-   GitHub account and authorize Streamlit to access the repository.
+```bash
+pip install -r requirements.txt
+```
 
-3. **Click "New app"** and fill in:
-   - **Repository:** `pramitraych-os/ai-stock-dashboard`
-   - **Branch:** `main`
-   - **Main file path:** `app.py`
+## 📊 Planned Features
 
-   Under **Advanced settings**, optionally pin the Python version (this
-   project is built against Python 3.12 -- see `.python-version`).
+- Historical stock price analysis
+- Stock market data visualization
+- Stock performance comparison
+- Financial trend analysis
+- AI-powered stock insights
 
-4. **Add the API key before the first deploy.** Still in Advanced settings
-   (or afterwards via **Settings -> Secrets** on the deployed app), open the
-   **Secrets** editor and add:
+*Features will be implemented progressively.*
 
-   ```toml
-   ANTHROPIC_API_KEY = "sk-ant-api03-..."
-   ```
+## 🔮 Future Improvements
 
-   This is plain TOML, one `KEY = "value"` pair per line -- the same optional
-   variables documented in `.env.example` (`OPENAI_API_KEY`,
-   `SENTIMENT_LLM_PROVIDER`, `CLAUDE_MODEL`, etc.) can go here too, in the
-   same format. `config.py` reads this via `st.secrets` automatically; no
-   code change is needed to switch between a local `.env` and Cloud secrets.
+- **Portfolio Management:** Track investments, portfolio performance, and profit/loss.
+- **Stock Price Alerts:** Implement automated notifications based on predefined stock price levels.
+- **Risk Analysis:** Introduce financial risk metrics such as volatility, Sharpe ratio, and maximum drawdown.
+- **Stock Screener:** Filter stocks based on financial indicators and fundamental metrics.
+- **Backtesting:** Evaluate trading strategies using historical market data.
+- **Benchmark Comparison:** Compare individual stock performance with major market indices.
 
-5. **Click "Deploy".** The first build installs `requirements.txt` from
-   scratch, which takes a few minutes; the app then boots on `app.py`.
+## 👨‍💻 Author
 
-6. **Verify it works:** open the deployed URL, confirm the Market Overview
-   table populates, and open one stock's detail section to confirm the
-   Sentiment Score is a real number rather than "n/a" with a
-   "no_api_key"/`auth_error` warning -- that would mean the secret didn't
-   save or is misnamed.
+**Pramit Raychaudhuri**
 
-7. **Updating the key later:** go to the app in
-   [share.streamlit.io](https://share.streamlit.io) -> **⋮ (menu)** ->
-   **Settings** -> **Secrets**, edit the TOML, and **Save** -- the app
-   restarts automatically and picks up the new value on the next run.
+GitHub: [@pramitraych-os](https://github.com/pramitraych-os)
 
-8. **Redeploys:** every push to the tracked branch triggers an automatic
-   redeploy. Secrets persist across redeploys -- they live in Streamlit's
-   own store, not in the repository.
+## 📌 Project Status
 
-### Notes specific to this app
+🚧 Currently under development.
 
-- The Random Forest models under `models/` are git-ignored (see
-  `SETUP.md`'s project structure). On Streamlit Cloud, the first request for
-  a ticker with no saved model trains one on the fly (`allow_training=True`
-  by default) and keeps it in the container's cache for the life of that
-  session -- it is not persisted back to the repo.
-- Sentiment and price-fetch results are cached (`st.cache_data`, one hour;
-  see `app.py`'s module docstring), so a cold Cloud instance's first load is
-  the slow one. The sidebar's **Refresh Data** button clears the cache on
-  demand.
+---
+
+If you find this project interesting, feel free to star ⭐ the repository!
