@@ -100,6 +100,11 @@ The project has been successfully completed. All planned core features have been
 
 Future enhancements may be added to improve functionality and user experience.
 
+## 🏗️ System Architecture
+
+The following diagram illustrates the overall architecture of the AI Stock Dashboard, showing the interaction between the user interface, application logic, data acquisition, processing, analytics, and visualization layers.
+
+[Paste the Mermaid flowchart here]
 ---
 
 If you find this project interesting, feel free to star ⭐ the repository!
