@@ -100,11 +100,40 @@ The project has been successfully completed. All planned core features have been
 
 Future enhancements may be added to improve functionality and user experience.
 
+---
+
 ## 🏗️ System Architecture
 
-The following diagram illustrates the overall architecture of the AI Stock Dashboard, showing the interaction between the user interface, application logic, data acquisition, processing, analytics, and visualization layers.
+The following flowchart illustrates the overall architecture and workflow of the AI Stock Dashboard, including data acquisition, processing, analysis, and visualization.
 
-[Paste the Mermaid flowchart here]
+```mermaid
+flowchart TD
+    A(["User"]) --> B["Dashboard Interface"]
+    B --> C["Enter Stock Symbol"]
+    C --> D{"Valid Input?"}
+
+    D -->|No| E["Display Error"]
+    E --> C
+
+    D -->|Yes| F["Application Logic"]
+    F --> G["Data Loader"]
+
+    G <--> H[("Yahoo Finance API")]
+    G --> I["Historical Stock Data"]
+
+    I --> J["Data Processing"]
+    J --> K["Pandas / NumPy"]
+
+    K --> L["Financial Analysis"]
+    L --> M["Stock Metrics & Trends"]
+
+    M --> N["AI Insights"]
+    M --> O["Data Visualization"]
+
+    N --> O
+    O --> P["Dashboard Results"]
+    P --> B
+```
 ---
 
 If you find this project interesting, feel free to star ⭐ the repository!
