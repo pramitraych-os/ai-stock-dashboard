@@ -8,6 +8,17 @@ The AI Stock Dashboard aims to provide an accessible way to explore stock market
 
 This project is currently under development.
 
+## 📸 Screenshots
+
+### Main Dashboard
+![Dashboard](screenshots/dashboard2.png)
+
+### Stock Analysis
+![Stock Analysis](screenshots/signal.png)
+
+### Trend Visuals
+![Trend Visuals](screenshots/trend.png)
+
 ## 🛠️ Technologies Used
 
 - **Python** – Core programming language
