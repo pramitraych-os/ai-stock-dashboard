@@ -20,7 +20,7 @@ This project is currently under development.
 ![Trend Visuals](screenshots/trend.png)
 ## 🎥 Project Demo
 
-[▶️ Watch Project Demo](demo.mov)
+[▶️ Watch Project Demo](demo.mp4)
 ## 🛠️ Technologies Used
 
 - **Python** – Core programming language
