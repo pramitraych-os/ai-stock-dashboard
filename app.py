@@ -1,0 +1,396 @@
+"""Streamlit entry point for the AI Stock Dashboard.
+
+Run with::
+
+    streamlit run app.py
+
+The file stays deliberately thin: it configures the page, renders the sidebar,
+lays out the main area, scores the preset universe for the overview table, and
+hands each payload to the widget that draws it. The pipeline stages live in
+``run_analysis`` and the ``src`` modules, the multi-ticker scan in
+``market_scan``, and the widgets in the ``ui`` package. What is actually
+implemented here is the *caching* and *concurrency* between the two.
+
+Streamlit re-runs this module top to bottom on every widget interaction, and
+scoring one ticker is expensive in two different ways -- the ML leg may train a
+Random Forest, the sentiment leg makes a paid LLM call over the network -- so
+caching happens at two layers:
+
+* Each expensive step caches itself, at the module that does the work: price
+  bars (``data_loader.fetch_stock_data``, ``@st.cache_data(ttl=3600)``),
+  headlines (``sentiment_engine.fetch_stock_news``, same TTL), the Claude/
+  OpenAI verdict (``sentiment_engine.get_llm_sentiment_score``, same TTL), the
+  Anthropic client (``sentiment_engine._get_anthropic_client``,
+  ``@st.cache_resource``, so it isn't rebuilt per call), and the trained
+  Random Forest (``ml_engine.load_model``, ``@st.cache_resource``). Any one of
+  these can be reused independently of the others.
+* :func:`load_scan_row` wraps the whole pipeline for one ticker on top of that
+  and is cached per *symbol*. That is the granularity the *page* cares about:
+  the overview table and the detail sections below it both go through it, so
+  the stock a reader clicks in the table is already scored by the time the
+  card underneath renders, and there is no way for the two halves of the page
+  to disagree about a number. Its own TTL is shorter than the stage caches
+  underneath it (30 minutes vs. an hour) because it also governs how long a
+  *blended verdict* is shown as current, not just how long any one input is
+  reused.
+* The cache key for both layers is the symbol and the pipeline's own settings,
+  deliberately *not* the chart's date range. Changing the range therefore
+  re-slices bars already in memory rather than re-running anything; news flow
+  has nothing to do with how far back the candles go.
+* :func:`run_market_scan` fans the scan out across a thread pool, because a row
+  is almost pure waiting -- on yfinance, then on the LLM. Twenty symbols scored
+  one at a time would be minutes of idle sockets.
+* The sidebar's "Refresh Data" button (``ui.sidebar._render_refresh_control``)
+  calls ``st.cache_data.clear()`` to force a genuinely fresh read on demand,
+  without waiting out any of the TTLs above. It leaves the ``cache_resource``
+  model cache alone -- a saved model doesn't go stale the way a quote does.
+"""
+
+from __future__ import annotations
+
+import datetime
+import os
+import sys
+
+import pandas as pd
+import streamlit as st
+from streamlit.runtime.scriptrunner import add_script_run_ctx, get_script_run_ctx
+
+# Running via ``streamlit run app.py`` does not put the project root on the
+# path the way ``python app.py`` would, so ``import ui`` needs the same fix-up
+# ``run_analysis`` applies for ``src``.
+PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
+
+import market_scan  # noqa: E402
+import run_analysis  # noqa: E402  (also puts ``src`` on the path)
+
+from ui import market_table, sidebar  # noqa: E402
+from ui.breakdown import render_breakdown  # noqa: E402
+from ui.config import DATE_RANGE_OPTIONS, MARKET_TABLE_SIZE, TICKER_UNIVERSE  # noqa: E402
+from ui.layout import render_layout  # noqa: E402
+from ui.price_chart import render_stock_chart  # noqa: E402
+from ui.signal_card import render_signal_card  # noqa: E402
+
+# Extra calendar days fetched beyond the window the user asked for, so the
+# 50-day moving average is already warmed up on the first bar displayed. 120
+# calendar days covers 50 trading days with room for holidays. Without this a
+# one-month selection would have no SMA_50 at all -- the warm-up would consume
+# every row the chart was meant to draw.
+INDICATOR_WARMUP_DAYS = 120
+
+# The ML leg needs a training set, not just a display window, so the fetch never
+# goes shorter than the pipeline's own default regardless of the chart's range.
+# A one-month selection would otherwise leave ``train_model`` below its 50-row
+# minimum and degrade every first-time ticker to a neutral score.
+ANALYSIS_LOOKBACK_DAYS = run_analysis.DEFAULT_LOOKBACK_DAYS
+
+# One fetch window for every selection, sized to the longest range the sidebar
+# offers plus the warm-up, and never below what the model needs to train on.
+#
+# Deliberately not derived from the *current* selection: a per-range window
+# would give each date range its own cache key, so switching from 1Y to 6M --
+# which needs no data the 1Y fetch did not already have -- would re-download the
+# ticker. A constant means one download per ticker and every range change served
+# from memory, at the cost of pulling the widest window even for a short view.
+FETCH_LOOKBACK_DAYS = max(
+    max(days for _label, days in DATE_RANGE_OPTIONS) + INDICATOR_WARMUP_DAYS,
+    ANALYSIS_LOOKBACK_DAYS,
+)
+
+# Headlines scored per pass and the ML/sentiment split, both taken from
+# ``run_analysis`` so the dashboard and the CLI cannot drift apart.
+NEWS_LIMIT = run_analysis.DEFAULT_NEWS_LIMIT
+ML_WEIGHT = run_analysis.DEFAULT_ML_WEIGHT
+
+# Every symbol the overview table ranks. Frozen into a tuple because it is a
+# cache key argument, and a list is unhashable.
+UNIVERSE_SYMBOLS: tuple[str, ...] = tuple(entry.symbol for entry in TICKER_UNIVERSE)
+
+# A scored row is cached for half an hour, pinned to the shortest-lived thing in
+# it. Daily bars only change after the close and the ML leg is a pure function
+# of them, but headlines arrive through the session -- and the sentiment call is
+# the one stage that costs money, which is why the window is a half hour rather
+# than minutes.
+ROW_CACHE_TTL_SECONDS = 1800
+
+SPINNER_MESSAGE = "Analyzing market data & sentiment..."
+SCAN_MESSAGE = "Scoring {done} of {total} stocks - price history, model, then news..."
+
+
+def configure_page() -> None:
+    """Sets the page-level Streamlit options.
+
+    Must run before any other Streamlit call, so this is the first thing
+    :func:`main` does. Wide layout gives the overview table room for its eleven
+    columns and the price chart the horizontal room a multi-month candlestick
+    series needs.
+    """
+    st.set_page_config(
+        page_title="AI Stock Analysis Dashboard",
+        page_icon="📈",
+        layout="wide",
+        initial_sidebar_state="expanded",
+    )
+
+
+@st.cache_data(ttl=ROW_CACHE_TTL_SECONDS, show_spinner=False)
+def load_scan_row(
+    ticker: str, fetch_days: int, news_limit: int, ml_weight: float
+) -> dict:
+    """Scores one ticker end to end: bars, indicators, model, news, blend.
+
+    The orchestration-level cache: everything underneath it (price fetch,
+    news fetch, LLM scoring, model load) already caches itself, but this is
+    still worth its own cache entry so the overview table and the detail
+    sections read a ticker through the exact same call. That guarantees a
+    symbol is fetched and scored once per cache window no matter how many
+    parts of the page want it, and that the table's Signal column is
+    literally the same value the card below renders -- not just the same
+    inputs recomputed twice into (hopefully) the same blend.
+
+    Never raises: ``market_scan.scan_ticker`` reports a failed fetch or a
+    failed leg as a row with no verdict and the reason in ``error``.
+
+    Parameters:
+    - ticker (str): The symbol to score.
+    - fetch_days (int): Fetch window; callers pass :data:`FETCH_LOOKBACK_DAYS`.
+    - news_limit (int): Maximum headlines to score; callers pass
+      :data:`NEWS_LIMIT`.
+    - ml_weight (float): Share of the blend given to the ML leg; callers pass
+      :data:`ML_WEIGHT`.
+
+    Returns:
+    - dict: A scan row, documented on ``market_scan.scan_ticker``.
+    """
+    return market_scan.scan_ticker(
+        ticker,
+        lookback_days=fetch_days,
+        news_limit=news_limit,
+        ml_weight=ml_weight,
+    )
+
+
+def run_market_scan(symbols: tuple[str, ...]) -> list[dict]:
+    """Scores every symbol in the universe, in parallel, behind a progress bar.
+
+    Not cached itself -- :func:`load_scan_row` is, per symbol, which is the
+    better granularity: one rate-limited ticker does not invalidate the other
+    nineteen, and a symbol scored by a previous scan or by the detail view is
+    already paid for.
+
+    The workers call a cached function, so each one is handed this run's
+    Streamlit script context. Without it the cache lookups happen off-context
+    and Streamlit logs a warning per call.
+
+    Parameters:
+    - symbols (tuple[str, ...]): The symbols to score, normally
+      :data:`UNIVERSE_SYMBOLS`.
+
+    Returns:
+    - list[dict]: One scan row per symbol, in input order.
+    """
+    context = get_script_run_ctx()
+    progress_slot = st.empty()
+    progress = progress_slot.progress(0.0, text=SCAN_MESSAGE.format(done=0, total=len(symbols)))
+
+    def score(symbol: str) -> dict:
+        return load_scan_row(symbol, FETCH_LOOKBACK_DAYS, NEWS_LIMIT, ML_WEIGHT)
+
+    def advance(done: int, total: int, _row: dict) -> None:
+        progress.progress(done / total, text=SCAN_MESSAGE.format(done=done, total=total))
+
+    try:
+        return market_scan.scan_tickers(
+            symbols,
+            scorer=score,
+            on_done=advance,
+            worker_initializer=(
+                (lambda: add_script_run_ctx(ctx=context)) if context is not None else None
+            ),
+        )
+    finally:
+        # On a warm cache the bar goes from 0 to 100 in a few milliseconds, so
+        # it is cleared rather than left on the page as a finished 100%.
+        progress_slot.empty()
+
+
+def window_bars(bars: pd.DataFrame, lookback_days: int) -> pd.DataFrame:
+    """Trims a scored frame back to the window the sidebar asked for.
+
+    Pure, and separate from the cached scan so that changing the date range
+    re-slices bars already in memory instead of re-scoring the ticker.
+
+    Parameters:
+    - bars (pd.DataFrame): A scan row's full fetched frame.
+    - lookback_days (int): Calendar days of history to keep.
+
+    Returns:
+    - pd.DataFrame: The trimmed bars, oldest first.
+    """
+    if bars.empty or "Date" not in bars.columns:
+        return bars
+
+    cutoff = pd.Timestamp(datetime.date.today() - datetime.timedelta(days=lookback_days))
+    windowed = bars[bars["Date"] >= cutoff]
+
+    # A stale cache can sit entirely before the cutoff. Showing the bars that do
+    # exist beats showing an empty chart, so the trim is skipped in that case.
+    if windowed.empty:
+        return bars
+
+    return windowed.reset_index(drop=True)
+
+
+# Copy for each ``score_basis`` that is not a plain 'blended' verdict.
+# ``market_scan.scan_ticker`` already excludes a failed leg's neutral
+# stand-in from the number itself; this is what tells the reader *why* the
+# score in front of them is a single leg rather than the usual 50/50 blend.
+_SCORE_BASIS_BADGES: dict[str, tuple[str, str]] = {
+    "technical_only": (
+        "Technical-only signal - Claude sentiment unavailable",
+        "orange",
+    ),
+    "sentiment_only": (
+        "Sentiment-only signal - ML model unavailable",
+        "orange",
+    ),
+    "unavailable": (
+        "No signal - both the ML and sentiment legs failed",
+        "red",
+    ),
+}
+
+
+def _render_score_basis_badge(row: dict) -> None:
+    """Shows a badge when the signal card's score is not the usual full blend.
+
+    Parameters:
+    - row (dict): A scan row from :func:`load_scan_row`.
+    """
+    badge = _SCORE_BASIS_BADGES.get(row["score_basis"])
+    if badge:
+        label, color = badge
+        st.badge(label, icon="⚠️", color=color)
+
+
+def _render_sentiment_service_notice(rows: list[dict]) -> None:
+    """Flags a dashboard-wide Claude problem, not just one ticker's.
+
+    A rate limit or an exhausted credit balance affects every row the scan
+    just ran, not only the one a reader happens to be looking at, so this is
+    checked once across the whole scan and shown above the table -- a reader
+    scrolling straight to one stock's card would otherwise have no reason to
+    suspect the sentiment leg is down dashboard-wide rather than unlucky for
+    that one symbol.
+
+    Parameters:
+    - rows (list[dict]): The scan results from :func:`run_market_scan`.
+    """
+    statuses = {row["sentiment"]["status"] for row in rows}
+
+    if "quota_exceeded" in statuses:
+        st.error(
+            "Anthropic API credits are exhausted, so sentiment scoring is "
+            "paused for every stock below. Add credits or upgrade the plan "
+            "in the Anthropic Console -- retrying will not help until then.",
+            icon="🚫",
+        )
+    elif "rate_limited" in statuses:
+        st.warning(
+            "Anthropic API rate limit reached. Sentiment scores below may be "
+            "stale or missing until it clears; try 'Refresh Data' shortly.",
+            icon="⏳",
+        )
+
+
+def main() -> None:
+    """Renders one pass of the dashboard.
+
+    Streamlit re-runs this top to bottom on every widget interaction, so the
+    body has to stay cheap. Everything here that can touch the network or train
+    a model sits behind :func:`load_scan_row`, so the cost is paid once per
+    symbol per cache window.
+    """
+    configure_page()
+
+    # A click on a table row is translated into the sidebar's own widget state,
+    # which has to happen before those widgets are instantiated. So it comes
+    # first, reading the click that the *previous* run left behind.
+    clicked = market_table.consume_row_selection()
+    if clicked:
+        sidebar.focus_ticker(clicked)
+
+    selection = sidebar.render_sidebar()
+    slots = render_layout(selection)
+
+    with slots.market_table:
+        scanned = run_market_scan(UNIVERSE_SYMBOLS)
+        # Dashboard-wide, so it belongs above the table rather than buried in
+        # one ticker's card -- a reader who never opens this ticker's detail
+        # section should still learn that Claude is down for everyone.
+        _render_sentiment_service_notice(scanned)
+        market_table.render_market_table(
+            scanned, top_n=MARKET_TABLE_SIZE, focused=selection.ticker
+        )
+
+    with slots.signal_summary:
+        # A universe symbol is already scored by the scan above, so this is a
+        # cache hit and the spinner never appears. A hand-typed one is not, and
+        # this is where that wait belongs -- where the verdict is about to be.
+        with st.spinner(SPINNER_MESSAGE):
+            row = load_scan_row(
+                selection.ticker, FETCH_LOOKBACK_DAYS, NEWS_LIMIT, ML_WEIGHT
+            )
+
+        sentiment = row["sentiment"]
+        render_signal_card(
+            row["blended_score"],
+            ml_probability=row["ml"]["probability"],
+            # A leg that fell back returns 0.0, which the card would render as a
+            # genuine neutral reading. Passing None makes it say 'n/a' instead,
+            # matching what the breakdown column below reports for the same leg.
+            sentiment_score=(
+                sentiment["sentiment_score"] if sentiment["status"] == "ok" else None
+            ),
+        )
+
+        # 'blended' needs no badge -- that is the normal case. Anything else
+        # means the score above is a single leg standing alone (or missing
+        # entirely), not the usual weighted blend, and says so plainly rather
+        # than letting the number pass for more than it is.
+        _render_score_basis_badge(row)
+
+        # A row with no verdict at all (bars.empty) sets 'error'; a row that
+        # scored but on degraded inputs (e.g. a stale cached-CSV fallback)
+        # only sets 'warning'. The first means there is nothing usable to
+        # show and gets the more severe treatment; the second means the
+        # numbers above are real, just worth a caveat.
+        if row["error"]:
+            st.error(row["error"], icon="🚫")
+        elif row["warning"]:
+            st.warning(row["warning"], icon="⚠️")
+
+    with slots.price_chart:
+        visible = window_bars(row["bars"], selection.lookback_days)
+
+        if visible.empty:
+            st.info("No price history to chart for this selection.")
+        else:
+            render_stock_chart(visible, selection.ticker)
+
+    # The table describes the bar the model scored, so it is given the full
+    # fetched frame rather than the chart's visible slice.
+    render_breakdown(
+        slots.breakdown_technical,
+        slots.breakdown_sentiment,
+        row["bars"],
+        row["ml"],
+        row["sentiment"],
+        selection.ticker,
+    )
+
+
+if __name__ == "__main__":
+    main()
