@@ -18,7 +18,9 @@ This project is currently under development.
 
 ### Trend Visuals
 ![Trend Visuals](screenshots/trend.png)
+## 🎥 Project Demo
 
+[▶️ Watch Project Demo](demo/project-demo.mp4)
 ## 🛠️ Technologies Used
 
 - **Python** – Core programming language
